@@ -49,6 +49,10 @@ target_link_libraries("unit_tests" PRIVATE
   "ebpf_for_windows_cpp_settings"
   "api"
   "api_common"
+    "sdsdlskj"
+
+
+
   "Catch2::Catch2WithMain"
   "common_tests"
   "netsh_static"
