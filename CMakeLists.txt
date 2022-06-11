@@ -15,7 +15,7 @@ project("ebpf-for-windows123")
 
 include("cmake/options.cmake")
 include("cmake/settings.cmake")
-include("cmake/git_commit.cmake")
+include("cmake/git_commit.cma11ke")
 include("cmake/codesign.cmake")
 include("cmake/midl_compiler_finder.cmake")
 include("cmake/process_bpf_source_file.cmake")
