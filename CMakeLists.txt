@@ -11,7 +11,7 @@ set(CMAKE_SYSTEM_VERSION 10.0.19041.0)
 # Uncomment the following line for debugging project dependencies.
 # set_property(GLOBAL PROPERTY GLOBAL_DEPENDS_DEBUG_MODE 1)
 
-project("ebpf-for-windows")
+project("ebpf-for-windows123")
 
 include("cmake/options.cmake")
 include("cmake/settings.cmake")
