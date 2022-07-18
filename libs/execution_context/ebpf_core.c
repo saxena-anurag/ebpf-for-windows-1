@@ -68,6 +68,29 @@ _ebpf_core_get_pid_tgid();
 
 static ebpf_program_info_t _ebpf_global_helper_program_info = {{"global_helper", NULL, {0}}, 0, NULL};
 
+// Validate that the string does not contain any null terminator in the
+// middle of the string.
+static ebpf_result_t
+_ebpf_core_validate_user_string(_In_ const uint8_t* string, size_t string_length, bool is_wide_char)
+{
+    if (is_wide_char && (string_length % 2 != 0)) {
+        return EBPF_INVALID_ARGUMENT;
+    }
+
+    uint32_t increment = is_wide_char ? sizeof(wchar_t) : sizeof(char);
+    for (size_t index = 0; index < string_length; index = index + increment) {
+        if (string[index] == '\0') {
+            if (!is_wide_char) {
+                return EBPF_INVALID_ARGUMENT;
+            } else if (string[index + 1] == '\0') {
+                return EBPF_INVALID_ARGUMENT;
+            }
+        }
+    }
+
+    return EBPF_SUCCESS;
+}
+
 static const void* _ebpf_general_helpers[] = {
     NULL,
     // Map related helpers.
@@ -472,10 +495,16 @@ _ebpf_core_protocol_create_map(
     if (request->header.length > EBPF_OFFSET_OF(ebpf_operation_create_map_request_t, data)) {
         map_name.value = (uint8_t*)request->data;
         map_name.length = ((uint8_t*)request) + request->header.length - ((uint8_t*)request->data);
+
+        retval = _ebpf_core_validate_user_string(map_name.value, map_name.length, false);
+        if (retval != EBPF_SUCCESS) {
+            goto Exit;
+        }
     }
 
     retval = ebpf_core_create_map(&map_name, &request->ebpf_map_definition, request->inner_map_handle, &reply->handle);
 
+Exit:
     EBPF_RETURN_RESULT(retval);
 }
 
@@ -508,6 +537,17 @@ _ebpf_core_protocol_create_program(
     section_name_length = program_name - section_name;
     program_name_length = ((uint8_t*)request) + request->header.length - program_name;
 
+    // Validate the strings.
+    if ((retval = _ebpf_core_validate_user_string(file_name, file_name_length, false)) != EBPF_SUCCESS) {
+        goto Done;
+    }
+    if ((retval = _ebpf_core_validate_user_string(section_name, section_name_length, false)) != EBPF_SUCCESS) {
+        goto Done;
+    }
+    if ((retval = _ebpf_core_validate_user_string(program_name, program_name_length, false)) != EBPF_SUCCESS) {
+        goto Done;
+    }
+
     parameters.program_type = request->program_type;
     parameters.program_name.value = program_name;
     parameters.program_name.length = program_name_length;
@@ -539,8 +579,8 @@ _ebpf_core_protocol_load_native_module(
         goto Done;
 
     // Service name is wide char
-    if (service_name_length % 2 != 0) {
-        result = EBPF_INVALID_ARGUMENT;
+    result = _ebpf_core_validate_user_string(request->data, service_name_length, true);
+    if (result != EBPF_SUCCESS) {
         goto Done;
     }
 
@@ -928,6 +968,11 @@ _ebpf_core_protocol_update_pinning(_In_ const struct _ebpf_operation_update_map_
         goto Done;
     }
 
+    retval = _ebpf_core_validate_user_string(path.value, path.length, false);
+    if (retval != EBPF_SUCCESS) {
+        goto Done;
+    }
+
     retval = ebpf_core_update_pinning(request->handle, &path);
 
 Done:
@@ -970,6 +1015,11 @@ _ebpf_core_protocol_get_pinned_object(
     }
 
     const ebpf_utf8_string_t path = {(uint8_t*)request->path, path_length};
+    retval = _ebpf_core_validate_user_string(path.value, path.length, false);
+    if (retval != EBPF_SUCCESS) {
+        goto Done;
+    }
+
     retval = ebpf_core_get_pinned_object(&path, &reply->handle);
 
 Done:
@@ -1342,6 +1392,11 @@ _ebpf_core_protocol_get_next_pinned_program_path(
     next_path.length = reply_length - EBPF_OFFSET_OF(ebpf_operation_get_next_pinned_program_path_reply_t, next_path);
     next_path.value = (uint8_t*)reply->next_path;
 
+    result = _ebpf_core_validate_user_string(start_path.value, start_path.length, false);
+    if (result != EBPF_SUCCESS) {
+        goto Exit;
+    }
+
     result =
         ebpf_pinning_table_get_next_path(_ebpf_core_map_pinning_table, EBPF_OBJECT_PROGRAM, &start_path, &next_path);
 
@@ -1349,6 +1404,8 @@ _ebpf_core_protocol_get_next_pinned_program_path(
         reply->header.length =
             (uint16_t)next_path.length + EBPF_OFFSET_OF(ebpf_operation_get_next_pinned_program_path_reply_t, next_path);
     }
+
+Exit:
     EBPF_RETURN_RESULT(result);
 }
 
