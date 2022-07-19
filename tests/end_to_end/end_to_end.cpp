@@ -2322,6 +2322,31 @@ TEST_CASE("load_native_program_negative5", "[end_to_end]")
     REQUIRE(result == -ENOENT);
 }
 
+// Load native module by passing invalid service name to EC.
+TEST_CASE("load_native_program_negative6", "[end-to-end]")
+{
+    _test_helper_end_to_end test_helper;
+
+    GUID provider_module_id;
+    SC_HANDLE service_handle = nullptr;
+    std::wstring service_path(L"");
+    size_t count_of_maps = 0;
+    size_t count_of_programs = 0;
+    set_native_module_failures(true);
+
+    REQUIRE(UuidCreate(&provider_module_id) == RPC_S_OK);
+
+    _create_service_helper(L"droppacket_um.dll", NATIVE_DRIVER_SERVICE_NAME, &provider_module_id, &service_handle);
+
+    // Create invalid service path and pass to EC.
+    service_path += NATIVE_DRIVER_SERVICE_NAME_2;
+
+    // Load native module. It should fail.
+    REQUIRE(
+        test_ioctl_load_native_module(service_path, &provider_module_id, &count_of_maps, &count_of_programs) ==
+        ERROR_PATH_NOT_FOUND);
+}
+
 // The below tests try to load native drivers for invalid programs (that will fail verification).
 // Since verification can be skipped in bpf2c for only Debug builds, these tests are applicable
 // only for Debug build.

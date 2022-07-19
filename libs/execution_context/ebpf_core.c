@@ -73,20 +73,26 @@ static ebpf_program_info_t _ebpf_global_helper_program_info = {{"global_helper",
 static ebpf_result_t
 _ebpf_core_validate_user_string(_In_ const uint8_t* string, size_t string_length, bool is_wide_char)
 {
-    if (is_wide_char && (string_length % 2 != 0)) {
-        return EBPF_INVALID_ARGUMENT;
-    }
+    /*
+        if (is_wide_char && (string_length % 2 != 0)) {
+            return EBPF_INVALID_ARGUMENT;
+        }
 
-    uint32_t increment = is_wide_char ? sizeof(wchar_t) : sizeof(char);
-    for (size_t index = 0; index < string_length; index = index + increment) {
-        if (string[index] == '\0') {
-            if (!is_wide_char) {
-                return EBPF_INVALID_ARGUMENT;
-            } else if (string[index + 1] == '\0') {
-                return EBPF_INVALID_ARGUMENT;
+        uint32_t increment = is_wide_char ? sizeof(wchar_t) : sizeof(char);
+        for (size_t index = 0; index < string_length - increment; index = index + increment) {
+            if (string[index] == '\0') {
+                if (!is_wide_char) {
+                    return EBPF_INVALID_ARGUMENT;
+                } else if (string[index + 1] == '\0') {
+                    return EBPF_INVALID_ARGUMENT;
+                }
             }
         }
-    }
+    */
+    // TODO -- temp code, remove it later.
+    UNREFERENCED_PARAMETER(string);
+    UNREFERENCED_PARAMETER(string_length);
+    UNREFERENCED_PARAMETER(is_wide_char);
 
     return EBPF_SUCCESS;
 }

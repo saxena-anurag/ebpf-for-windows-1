@@ -94,3 +94,51 @@ test_ioctl_load_native_programs(
 Done:
     return error;
 }
+
+ebpf_result_t
+test_ioctl_create_map(
+    _In_opt_ const char* name,
+    size_t name_length,
+    _In_ const ebpf_map_definition_in_memory_t* map_definition,
+    ebpf_handle_t inner_map_handle,
+    ebpf_result_t expected_result,
+    _Out_ ebpf_handle_t* map_handle)
+{
+    ebpf_result_t result = EBPF_SUCCESS;
+    uint32_t return_value = ERROR_SUCCESS;
+    ebpf_protocol_buffer_t request_buffer;
+    _ebpf_operation_create_map_request* request;
+    ebpf_operation_create_map_reply_t reply;
+    std::string map_name;
+    size_t map_name_size;
+
+    if (name != nullptr) {
+        map_name = std::string(name, name_length);
+    }
+    *map_handle = ebpf_handle_invalid;
+    map_name_size = map_name.size();
+
+    size_t buffer_size = offsetof(ebpf_operation_create_map_request_t, data) + map_name_size;
+    request_buffer.resize(buffer_size);
+
+    request = reinterpret_cast<ebpf_operation_create_map_request_t*>(request_buffer.data());
+    request->header.id = ebpf_operation_id_t::EBPF_OPERATION_CREATE_MAP;
+    request->header.length = static_cast<uint16_t>(request_buffer.size());
+    request->ebpf_map_definition = *map_definition;
+    request->inner_map_handle = (uint64_t)inner_map_handle;
+    std::copy(
+        map_name.begin(), map_name.end(), request_buffer.begin() + offsetof(ebpf_operation_create_map_request_t, data));
+
+    return_value = invoke_ioctl(request_buffer, reply);
+    result = win32_error_code_to_ebpf_result(return_value);
+    REQUIRE(result == expected_result);
+    if (result != EBPF_SUCCESS) {
+        goto Exit;
+    }
+
+    REQUIRE(reply.header.id == ebpf_operation_id_t::EBPF_OPERATION_CREATE_MAP);
+    *map_handle = reply.handle;
+
+Exit:
+    EBPF_RETURN_RESULT(result);
+}
