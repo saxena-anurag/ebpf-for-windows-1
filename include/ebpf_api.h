@@ -11,8 +11,12 @@
 #include "ebpf_result.h"
 
 #ifdef __cplusplus
+#include <stdexcept>
+#define EBPF_NO_EXCEPT noexcept
 extern "C"
 {
+#else
+#define EBPF_NO_EXCEPT
 #endif
 
     typedef int32_t fd_t;
@@ -23,56 +27,6 @@ extern "C"
     struct bpf_program;
     struct bpf_map;
     struct bpf_link;
-
-    /**
-     * @brief Create an eBPF map with input parameters.
-     *
-     * @param[in] map_type Map type.
-     * @param[in] key_size Key size.
-     * @param[in] value_size Value size.
-     * @param[in] max_entries Maximum number of entries in the map.
-     * @param[in] map_flags This is reserved and should be 0.
-     * @param[out] map_fd File descriptor for the created map. The caller needs to
-     *  call _close() on the returned fd when done.
-     *
-     * @retval EBPF_SUCCESS Map created successfully.
-     * @retval EBPF_ERROR_NOT_SUPPORTED Unsupported map type.
-     * @retval EBPF_INVALID_ARGUMENT One or more parameters are incorrect.
-     */
-    ebpf_result_t
-    ebpf_create_map(
-        ebpf_map_type_t map_type,
-        uint32_t key_size,
-        uint32_t value_size,
-        uint32_t max_entries,
-        uint32_t map_flags,
-        _Out_ fd_t* map_fd);
-
-    /**
-     * @brief Create an eBPF map with input parameters.
-     *
-     * @param[in] type Map type.
-     * @param[in] name Optionally, the map name.
-     * @param[in] key_size Key size.
-     * @param[in] value_size Value size.
-     * @param[in] max_entries Maximum number of entries in the map.
-     * @param[in] map_flags This is reserved and should be 0.
-     * @param[out] map_fd File descriptor for the created map. The caller needs to
-     *  call _close() on the returned fd when done.
-     *
-     * @retval EBPF_SUCCESS Map created successfully.
-     * @retval EBPF_ERROR_NOT_SUPPORTED Unsupported map type.
-     * @retval EBPF_INVALID_ARGUMENT One or more parameters are incorrect.
-     */
-    ebpf_result_t
-    ebpf_create_map_name(
-        ebpf_map_type_t type,
-        _In_opt_z_ const char* name,
-        uint32_t key_size,
-        uint32_t value_size,
-        uint32_t max_entries,
-        uint32_t map_flags,
-        _Out_ fd_t* map_fd);
 
     /**
      * @brief Query info about an eBPF program.
@@ -142,7 +96,10 @@ extern "C"
      */
     uint32_t
     ebpf_api_elf_disassemble_section(
-        const char* file, const char* section, const char** disassembly, const char** error_message);
+        _In_z_ const char* file,
+        _In_z_ const char* section,
+        _Outptr_result_maybenull_z_ const char** disassembly,
+        _Outptr_result_maybenull_z_ const char** error_message);
 
     typedef struct
     {
@@ -363,6 +320,26 @@ extern "C"
     ebpf_link_detach(_In_ struct bpf_link* link);
 
     /**
+     * @brief Detach an eBPF program.
+     *
+     * @param[in] program_fd File descriptor of program to detach. If set to -1,
+     * this parameter is ignored.
+     * @param[in] attach_type The attach type for attaching the program.
+     * @param[in] attach_parameter_size Size of the attach parameter.
+     * @param[in] attach_parameter Pointer to attach parameter. This is an
+     *  opaque flat buffer containing the attach parameters which is interpreted
+     *  by the extension provider.
+     * @retval EBPF_SUCCESS The operation was successful.
+     * @retval EBPF_INVALID_OBJECT Invalid object was passed.
+     */
+    ebpf_result_t
+    ebpf_program_detach(
+        fd_t program_fd,
+        _In_ const ebpf_attach_type_t* attach_type,
+        _In_reads_bytes_(attach_parameter_size) void* attach_parameter,
+        size_t attach_parameter_size) EBPF_NO_EXCEPT;
+
+    /**
      * Clean up and free bpf_link structure. Also close the
      * underlying link fd.
      *
@@ -404,20 +381,6 @@ extern "C"
         _Out_ ebpf_attach_type_t* expected_attach_type);
 
     /**
-     * @brief Get bpf program type and expected attach type by name.
-     *
-     * @param[in] name Name, as if it were a section name in an ELF file.
-     * @param[out] program_type Bpf program type.
-     * @param[out] expected_attach_type Expected bpf attach type.
-     *
-     * @retval EBPF_SUCCESS The operation was successful.
-     * @retval EBPF_KEY_NOT_FOUND No program type was found.
-     */
-    ebpf_result_t
-    ebpf_get_bpf_program_type_by_name(
-        _In_z_ const char* name, _Out_ bpf_prog_type_t* program_type, _Out_ bpf_attach_type_t* expected_attach_type);
-
-    /**
      * @brief Get the name of a given program type.
      *
      * @param[in] program_type Program type.
@@ -449,6 +412,20 @@ extern "C"
     ebpf_result_t
     ebpf_get_next_pinned_program_path(
         _In_z_ const char* start_path, _Out_writes_z_(EBPF_MAX_PIN_PATH_LENGTH) char* next_path);
+
+    typedef struct _ebpf_program_info ebpf_program_info_t;
+
+    /**
+     * @brief Get the set of program information used by the verifier during
+     * the last verification.
+     *
+     * @param[out] program_info Pointer to the program information used to
+     * verify the program.
+     * @retval EBPF_SUCCESS The operation was successful.
+     * @retval EBPF_OBJECT_NOT_FOUND No program information was found.
+     */
+    ebpf_result_t
+    ebpf_get_program_info_from_verifier(_Outptr_ const ebpf_program_info_t** program_info);
 
 #ifdef __cplusplus
 }

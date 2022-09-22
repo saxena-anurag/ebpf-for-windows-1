@@ -87,7 +87,7 @@ _clean_up_thread_pool()
 
 class _ebpf_emulated_dpc;
 
-thread_local static bool _ebpf_non_preemptible = false;
+thread_local bool ebpf_non_preemptible = false;
 
 typedef struct _ebpf_non_preemptible_work_item
 {
@@ -120,7 +120,7 @@ class _ebpf_emulated_dpc
     {
         ebpf_list_initialize(&head);
         thread = std::thread([i, this]() {
-            _ebpf_non_preemptible = true;
+            ebpf_non_preemptible = true;
             std::unique_lock<std::mutex> l(mutex);
             uintptr_t old_thread_affinity;
             ebpf_set_current_thread_affinity(1ull << i, &old_thread_affinity);
@@ -136,6 +136,7 @@ class _ebpf_emulated_dpc
                         condition_variable.notify_all();
                     } else {
                         l.unlock();
+                        ebpf_list_initialize(entry);
                         auto work_item = reinterpret_cast<ebpf_non_preemptible_work_item_t*>(entry);
                         work_item->work_item_routine(work_item->context, work_item->parameter_1);
                         l.lock();
@@ -641,7 +642,7 @@ _Ret_range_(>, 0) uint32_t ebpf_get_cpu_count()
 bool
 ebpf_is_preemptible()
 {
-    return !_ebpf_non_preemptible;
+    return !ebpf_non_preemptible;
 }
 
 bool

@@ -11,7 +11,7 @@
 #include "sample_ext_program_info.h"
 
 bpf_attach_type_t
-get_bpf_attach_type(_In_ const ebpf_attach_type_t* ebpf_attach_type);
+get_bpf_attach_type(_In_ const ebpf_attach_type_t* ebpf_attach_type) noexcept;
 
 typedef struct _ebpf_free_memory
 {
@@ -142,6 +142,15 @@ typedef class _single_instance_hook : public _hook_helper
             ebpf_link_close(link_object);
             link_object = nullptr;
         }
+    }
+
+    ebpf_result_t
+    detach(
+        fd_t program_fd,
+        _In_reads_bytes_(attach_parameter_size) void* attach_parameter,
+        _In_ size_t attach_parameter_size)
+    {
+        return ebpf_program_detach(program_fd, &attach_type, attach_parameter, attach_parameter_size);
     }
 
     void

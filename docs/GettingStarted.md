@@ -3,6 +3,9 @@
 If you just want to install eBPF for Windows on a machine to experiment with,
 jump down to [Installing eBPF for Windows](#installing-ebpf-for-windows).
 
+If you just want to compile, but not run, eBPF programs and applications that interact with them,
+jump down to [Using eBPF in development](#using-ebpf-in-development).
+
 ## Building eBPF for Windows
 
 ### Prerequisites
@@ -14,8 +17,8 @@ The following must be installed in order to build this project:
    the "MSVC v142 - VS 2019 C++ x64/x86 Spectre-mitigated libs (latest)"
    which must be selected as an Individual component in the VS installer
 3. [Visual Studio Build Tools 2019](https://aka.ms/vs/16/release/vs_buildtools.exe)
-4. [WDK for Windows 10, version 2004](https://go.microsoft.com/fwlink/?linkid=2128854)
-5. [Clang for Windows 64-bit version 11.0.1](https://github.com/llvm/llvm-project/releases/download/llvmorg-11.0.1/LLVM-11.0.1-win64.exe) or [The latest release of Clang for Windows 64-bit](https://github.com/llvm/llvm-project/releases/latest)
+4. [WDK for Windows 10, version 2004](https://go.microsoft.com/fwlink/?linkid=2128854), including the "Windows Driver Kit Visual Studio extension" (make sure the check box is checked before completing the installer)
+5. [Clang for Windows 64-bit version 11.0.1](https://github.com/llvm/llvm-project/releases/download/llvmorg-11.0.1/LLVM-11.0.1-win64.exe).  Note: clang versions 12 and higher are NOT yet supported, as they perform program optimizations that are incompatible with the PREVAIL verifier.
 6. [nuget.exe](https://www.nuget.org/downloads) installed to a location such as "C:\Program Files (x86)\NuGet\"
 
 You should add the paths to `git.exe`, `cmake.exe` and `nuget.exe` to the Windows PATH environment variable after the software packages above have been installed.
@@ -82,12 +85,12 @@ This will build the following binaries:
 * `ebpfsvc.exe`: A user-mode service that verifies and loads an eBPF program in the execution context.
 * `unit_tests.exe`: A collection of tests using the Catch framework.  These tests are also run as part
                   of the Github CI/CD so should always pass.
-* `api_test.exe`: A collection of tests that exercises eBPF user mode APIs. This requires EbpSvc service to be running,
-                and EbpCore and NetEbpfExt drivers to be loaded.
+* `api_test.exe`: A collection of tests that exercises eBPF user mode APIs. This requires EbpfSvc service to be running,
+                and EbpfCore and NetEbpfExt drivers to be loaded.
 * `sample_ebpf_ext.sys`: A sample eBPF extension driver that implements a test hook (for a test program type) and test helper functions.
 * `sample_ext_app.exe`: A sample application for testing the sample extension driver.
-* `xdp_tests.exe`: Application for testing various XDP functionalities.  This requires the EbpSvc service to be running,
-                and the EbpCore and NetEbpfExt drivers to be loaded on a remote system to test.
+* `xdp_tests.exe`: Application for testing various XDP functionalities.  This requires the EbpfSvc service to be running,
+                and the EbpfCore and NetEbpfExt drivers to be loaded on a remote system to test.
 * `socket_tests.exe`: Application for testing the eBPF extension that implements the BPF_CGROUP_SOCK_ADDR program type and related attach types.
 
 and a few binaries just used for demo'ing eBPF functionality, as in the demo walkthrough discussed below:
@@ -249,12 +252,39 @@ Other useful options include:
 4.	`Test_name` to run a single test
 
 ### xdp_tests.exe
-This application tests various XDP functionalities. It has the following tests:
-1. Reflection Test: This tests the XDP_TX functionality. The following steps show how to run the test:
-   1. On the system under test, install eBPF binaries (`.\scripts\setup-ebpf.ps1`).
-   2. Load the test eBPF program by running the following commands: `netsh`, `ebpf`, `add program reflect_packet.o xdp` and note the ID.
-   3. From a remote host, run xdp_tests.exe and in `--remote-ip` parameter pass an IPv4 or IPv6 address of an Ethernet-like interface on the system under test in string format.
-   4. Unload the program from system under test by running `delete program <id>` on the netsh prompt, where <id> is the ID noted above.
+This application tests various XDP functionalities. These tests require two hosts to run. There are three variations of the XDP tests.
+
+#### Reflection Test
+This tests the XDP_TX functionality.
+1. On the first host:
+   1. [Install eBPF for Windows](https://github.com/microsoft/ebpf-for-windows/blob/main/docs/InstallEbpf.md).
+   2. Load the test eBPF program by running the following command: `netsh ebpf add program reflect_packet.o xdp` and note the ID. See **Note 3** below.
+2. On the second host:
+   1. Allow inbound traffic for `xdp_tests.exe` through Windows Defender Firewall. See **Note 1** below.
+   2. Run `xdp_tests.exe xdp_reflect_test --remote_ip <IP on the first host>`. See **Note 2** below.
+
+#### Encapsulation Test
+This uses `bpf_xdp_adjust_head` helper function to encapsulate an outer IP header to a packet.
+1. On the first host:
+   1. [Install eBPF for Windows](https://github.com/microsoft/ebpf-for-windows/blob/main/docs/InstallEbpf.md).
+   2. Load the test eBPF program by running the following command: `netsh ebpf add program encap_reflect_packet.o xdp` and note the ID. See **Note 3** below.
+2. On the second host:
+   1. Allow inbound traffic for `xdp_tests.exe` through Windows Defender Firewall. See **Note 1** below.
+   2. Run `xdp_tests.exe xdp_encap_reflect_test --remote_ip <IP on the first host>`. See **Note 2** below.
+
+#### Decapsulation Test
+This uses `bpf_xdp_adjust_head` helper function to decapsulate an outer IP header from a packet.
+1. On *both* the hosts, [install eBPF for Windows](https://github.com/microsoft/ebpf-for-windows/blob/main/docs/InstallEbpf.md).
+2. On the first host load the first test eBPF program by running the following command: `netsh ebpf add program encap_reflect_packet.o xdp` and note the ID. See **Note 3** below.
+3. On the second host:
+   1. Load the second test eBPF program by running the following command: `netsh ebpf add program decap_permit_packet.o xdp` and note the ID. See **Note 3** below.
+   2. Allow inbound traffic for `xdp_tests.exe` through Windows Defender Firewall. See **Note 1** below.
+   3. Run `xdp_tests.exe xdp_reflect_test --remote_ip <IP on the first host>`. See **Note 2** below.
+
+**Note 1:** To allow inbound traffic to `xdp_tests.exe`, in a Windows Powershell with administrative privilege, run `New-NetFirewallRule -DisplayName "XDP_Test" -Program "<Full path to xdp_tests.exe>" -Direction Inbound -Action Allow`.<br>
+**Note 2:** For the `--remote-ip` parameter to `xdp_tests.exe` program that is run on the second host, pass an IPv4 or IPv6 address of an Ethernet-like interface on the first host in string format.<br>
+**Note 3:** After completion of each test variation, unload the eBPF programs from both host machines by running `delete program <id>` on the netsh prompt, where `<id>` is the ID noted when the eBPF programs were loaded.<br>
+***Advanced:*** The eBPF program can be attached to a specific interface by passing `interface=<IfIndex>` parameter either to the netsh `add program` or `set program` commands.
 
 ### socket_tests.exe
 This application loads the `cgroup_sock_addr.o` eBPF program and attaches to hooks to handle various socket operations. Currently it tests authorizing ingress and egress connections based on entries in a map passed to the program.
@@ -272,7 +302,7 @@ To capture a trace in a file use the following commands:
 
 ### Viewing traces in real-time
 To view traces in real-time, the `tracelog.exe` and `tracefmt.exe` commands from the WDK can be used.
-If you are running eBPF for Windows in a VM, you can either install the full WDK in the VM (see the Prequisites
+If you are running eBPF for Windows in a VM, you can either install the full WDK in the VM (see the Prerequisites
 section above) or just copy the two executables into the VM.
 
 To view all eBPF trace events that would be captured to a file, use the following commands:
@@ -310,3 +340,19 @@ To view all trace events from the network eBPF extension (`netebpfext.sys`), use
 2) View the session in real-time on stdout: ```tracefmt -rt NetEbpfExtTrace -displayonly -jsonMeta 0```.  This will
    continue until you break out of the executable with Ctrl-C.
 3) Close the trace session: ```tracelog -stop NetEbpfExtTrace```
+
+## Using eBPF in Development
+
+If you are developing eBPF programs and applications that interact with them,
+your Visual Studio development will need to reference the eBPF for Windows project as follows.
+
+If using Visual Studio as your IDE, your project can add a reference to the
+[eBPF-for-Windows](https://www.nuget.org/packages/eBPF-for-Windows) nuget package.
+(You can also manually download the nuget package from the
+[latest release](https://github.com/microsoft/ebpf-for-windows/releases).)
+
+If you [installed eBPF for Windows via the MSI](https://github.com/microsoft/ebpf-for-windows/blob/main/docs/InstallEbpf.md)
+and checked the Development checkbox, installation was completed for you.
+Otherwise, after installing the nuget package, as a one-time operation, you will
+currently need to run the `export_program_info.exe` tool to complete the install. This
+tool can be found in your project's `packages\eBPF-for-Windows\build\native\bin` directory.

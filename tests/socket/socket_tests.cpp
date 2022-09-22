@@ -30,11 +30,10 @@ connection_test(
     _In_ receiver_socket_t& receiver_socket,
     uint32_t protocol)
 {
-    struct bpf_object* object;
-    int program_fd;
-    int result = bpf_prog_load_deprecated("cgroup_sock_addr.o", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, &object, &program_fd);
-    REQUIRE(result == 0);
+    struct bpf_object* object = bpf_object__open("cgroup_sock_addr.o");
     REQUIRE(object != nullptr);
+    // Load the programs.
+    REQUIRE(bpf_object__load(object) == 0);
 
     const char* connect_program_name = (address_family == AF_INET) ? "authorize_connect4" : "authorize_connect6";
     bpf_program* connect_program = bpf_object__find_program_by_name(object, connect_program_name);
@@ -80,7 +79,7 @@ connection_test(
     // Attach the connect program at BPF_CGROUP_INET4_CONNECT.
     bpf_attach_type connect_attach_type =
         (address_family == AF_INET) ? BPF_CGROUP_INET4_CONNECT : BPF_CGROUP_INET6_CONNECT;
-    result =
+    int result =
         bpf_prog_attach(bpf_program__fd(const_cast<const bpf_program*>(connect_program)), 0, connect_attach_type, 0);
     REQUIRE(result == 0);
 
@@ -159,38 +158,85 @@ TEST_CASE("connection_test_tcp_v6", "[sock_addr_tests]")
 
 TEST_CASE("attach_sock_addr_programs", "[sock_addr_tests]")
 {
-    struct bpf_object* object;
-    int program_fd;
-    int result = bpf_prog_load_deprecated("cgroup_sock_addr.o", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, &object, &program_fd);
-    REQUIRE(result == 0);
+    bpf_prog_info program_info;
+    uint32_t program_info_size = sizeof(program_info);
+
+    struct bpf_object* object = bpf_object__open("cgroup_sock_addr.o");
     REQUIRE(object != nullptr);
+    // Load the programs.
+    REQUIRE(bpf_object__load(object) == 0);
 
     bpf_program* connect4_program = bpf_object__find_program_by_name(object, "authorize_connect4");
     REQUIRE(connect4_program != nullptr);
 
-    result = bpf_prog_attach(
-        bpf_program__fd(const_cast<const bpf_program*>(connect4_program)), 0, BPF_CGROUP_INET4_CONNECT, 0);
+    int result = bpf_prog_attach(
+        bpf_program__fd(const_cast<const bpf_program*>(connect4_program)),
+        UNSPECIFIED_COMPARTMENT_ID,
+        BPF_CGROUP_INET4_CONNECT,
+        0);
     REQUIRE(result == 0);
+
+    ZeroMemory(&program_info, program_info_size);
+    REQUIRE(
+        bpf_obj_get_info_by_fd(
+            bpf_program__fd(const_cast<const bpf_program*>(connect4_program)), &program_info, &program_info_size) == 0);
+    REQUIRE(program_info.link_count == 1);
+
+    result = bpf_prog_detach(UNSPECIFIED_COMPARTMENT_ID, BPF_CGROUP_INET4_CONNECT);
+    REQUIRE(result == 0);
+
+    ZeroMemory(&program_info, program_info_size);
+    REQUIRE(
+        bpf_obj_get_info_by_fd(
+            bpf_program__fd(const_cast<const bpf_program*>(connect4_program)), &program_info, &program_info_size) == 0);
+    REQUIRE(program_info.link_count == 0);
 
     bpf_program* recv_accept4_program = bpf_object__find_program_by_name(object, "authorize_recv_accept4");
     REQUIRE(recv_accept4_program != nullptr);
 
     result = bpf_prog_attach(
-        bpf_program__fd(const_cast<const bpf_program*>(recv_accept4_program)), 0, BPF_CGROUP_INET4_RECV_ACCEPT, 0);
+        bpf_program__fd(const_cast<const bpf_program*>(recv_accept4_program)),
+        UNSPECIFIED_COMPARTMENT_ID,
+        BPF_CGROUP_INET4_RECV_ACCEPT,
+        0);
     REQUIRE(result == 0);
+
+    REQUIRE(
+        bpf_obj_get_info_by_fd(
+            bpf_program__fd(const_cast<const bpf_program*>(recv_accept4_program)), &program_info, &program_info_size) ==
+        0);
+    REQUIRE(program_info.link_count == 1);
+
+    result = bpf_prog_detach2(
+        bpf_program__fd(const_cast<const bpf_program*>(recv_accept4_program)),
+        UNSPECIFIED_COMPARTMENT_ID,
+        BPF_CGROUP_INET4_RECV_ACCEPT);
+    REQUIRE(result == 0);
+
+    REQUIRE(
+        bpf_obj_get_info_by_fd(
+            bpf_program__fd(const_cast<const bpf_program*>(recv_accept4_program)), &program_info, &program_info_size) ==
+        0);
+    REQUIRE(program_info.link_count == 0);
 
     bpf_program* connect6_program = bpf_object__find_program_by_name(object, "authorize_connect6");
     REQUIRE(connect6_program != nullptr);
 
     result = bpf_prog_attach(
-        bpf_program__fd(const_cast<const bpf_program*>(connect6_program)), 0, BPF_CGROUP_INET6_CONNECT, 0);
+        bpf_program__fd(const_cast<const bpf_program*>(connect6_program)),
+        DEFAULT_COMPARTMENT_ID,
+        BPF_CGROUP_INET6_CONNECT,
+        0);
     REQUIRE(result == 0);
 
     bpf_program* recv_accept6_program = bpf_object__find_program_by_name(object, "authorize_recv_accept6");
     REQUIRE(recv_accept6_program != nullptr);
 
     result = bpf_prog_attach(
-        bpf_program__fd(const_cast<const bpf_program*>(recv_accept6_program)), 0, BPF_CGROUP_INET6_RECV_ACCEPT, 0);
+        bpf_program__fd(const_cast<const bpf_program*>(recv_accept6_program)),
+        DEFAULT_COMPARTMENT_ID,
+        BPF_CGROUP_INET6_RECV_ACCEPT,
+        0);
     REQUIRE(result == 0);
 
     bpf_object__close(object);
@@ -367,11 +413,10 @@ connection_monitor_test(
     uint32_t protocol,
     bool disconnect)
 {
-    struct bpf_object* object;
-    int program_fd;
-    int result = bpf_prog_load_deprecated("sockops.o", BPF_PROG_TYPE_SOCK_OPS, &object, &program_fd);
-    REQUIRE(result == 0);
+    struct bpf_object* object = bpf_object__open("sockops.o");
     REQUIRE(object != nullptr);
+    // Load the programs.
+    REQUIRE(bpf_object__load(object) == 0);
 
     // Ring buffer event callback context.
     std::unique_ptr<ring_buffer_test_event_context_t> context = std::make_unique<ring_buffer_test_event_context_t>();
@@ -447,7 +492,7 @@ connection_monitor_test(
     receiver_socket.post_async_receive();
 
     // Attach the sockops program.
-    result = bpf_prog_attach(bpf_program__fd(const_cast<const bpf_program*>(_program)), 0, BPF_CGROUP_SOCK_OPS, 0);
+    int result = bpf_prog_attach(bpf_program__fd(const_cast<const bpf_program*>(_program)), 0, BPF_CGROUP_SOCK_OPS, 0);
     REQUIRE(result == 0);
 
     // Send loopback message to test port.
@@ -543,16 +588,15 @@ TEST_CASE("connection_monitor_test_disconnect_tcp_v6", "[sock_ops_tests]")
 
 TEST_CASE("attach_sockops_programs", "[sock_ops_tests]")
 {
-    struct bpf_object* object;
-    int program_fd;
-    int result = bpf_prog_load_deprecated("sockops.o", BPF_PROG_TYPE_SOCK_OPS, &object, &program_fd);
-    REQUIRE(result == 0);
+    struct bpf_object* object = bpf_object__open("sockops.o");
     REQUIRE(object != nullptr);
+    // Load the programs.
+    REQUIRE(bpf_object__load(object) == 0);
 
     bpf_program* _program = bpf_object__find_program_by_name(object, "connection_monitor");
     REQUIRE(_program != nullptr);
 
-    result = bpf_prog_attach(bpf_program__fd(const_cast<const bpf_program*>(_program)), 0, BPF_CGROUP_SOCK_OPS, 0);
+    int result = bpf_prog_attach(bpf_program__fd(const_cast<const bpf_program*>(_program)), 0, BPF_CGROUP_SOCK_OPS, 0);
     REQUIRE(result == 0);
 
     bpf_object__close(object);

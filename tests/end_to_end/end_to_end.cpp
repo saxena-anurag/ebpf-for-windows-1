@@ -56,6 +56,8 @@ namespace ebpf {
     TEST_CASE(CONCAT(_name, "-jit"), _group) { _function(EBPF_EXECUTION_JIT); } \
     TEST_CASE(CONCAT(_name, "-native"), _group) { _function(EBPF_EXECUTION_NATIVE); }
 
+extern thread_local bool ebpf_non_preemptible;
+
 std::vector<uint8_t>
 prepare_ip_packet(uint16_t ethernet_type)
 {
@@ -490,6 +492,32 @@ divide_by_zero_test_um(ebpf_execution_type_t execution_type)
     bpf_object__close(object);
 }
 
+void
+bad_map_name_um(ebpf_execution_type_t execution_type)
+{
+    _test_helper_end_to_end test_helper;
+
+    int result;
+    const char* error_message = nullptr;
+    bpf_object* object = nullptr;
+    fd_t program_fd;
+
+    single_instance_hook_t hook(EBPF_PROGRAM_TYPE_XDP, EBPF_ATTACH_TYPE_XDP);
+    program_info_provider_t xdp_program_info(EBPF_PROGRAM_TYPE_XDP);
+
+    const char* file_name = (execution_type == EBPF_EXECUTION_NATIVE ? "bad_map_name_um.dll" : "bad_map_name.o");
+
+    result = ebpf_program_load(file_name, BPF_PROG_TYPE_UNSPEC, execution_type, &object, &program_fd, &error_message);
+
+    if (error_message) {
+        printf("ebpf_program_load failed with %s\n", error_message);
+        free((void*)error_message);
+    }
+    REQUIRE(result == -EINVAL);
+
+    bpf_object__close(object);
+}
+
 typedef struct _process_entry
 {
     uint32_t count;
@@ -871,6 +899,7 @@ DECLARE_ALL_TEST_CASES("bindmonitor-tailcall", "[end_to_end]", bindmonitor_tailc
 DECLARE_ALL_TEST_CASES("bindmonitor-ringbuf", "[end_to_end]", bindmonitor_ring_buffer_test);
 DECLARE_ALL_TEST_CASES("utility-helpers", "[end_to_end]", _utility_helper_functions_test);
 DECLARE_ALL_TEST_CASES("map", "[end_to_end]", map_test);
+DECLARE_ALL_TEST_CASES("bad_map_name", "[end_to_end]", bad_map_name_um);
 
 TEST_CASE("enum section", "[end_to_end]")
 {
@@ -994,8 +1023,11 @@ _cgroup_load_test(
 
     uint32_t compartment_id = 0;
     REQUIRE(hook.attach(program, &compartment_id, sizeof(compartment_id)) == EBPF_SUCCESS);
+    REQUIRE(hook.detach(ebpf_fd_invalid, &compartment_id, sizeof(compartment_id)) == EBPF_SUCCESS);
 
-    hook.detach();
+    compartment_id = 1;
+    REQUIRE(hook.attach(program, &compartment_id, sizeof(compartment_id)) == EBPF_SUCCESS);
+    REQUIRE(hook.detach(program_fd, &compartment_id, sizeof(compartment_id)) == EBPF_SUCCESS);
 
     bpf_object__close(object);
 }
@@ -1730,10 +1762,11 @@ _map_reuse_test(ebpf_execution_type_t execution_type)
     const char* file_name = (execution_type == EBPF_EXECUTION_NATIVE ? "map_reuse_um.dll" : "map_reuse.o");
 
     // First create and pin the maps manually.
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
-    int outer_map_fd = bpf_create_map_in_map(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), inner_map_fd, 1, 0);
+    bpf_map_create_opts opts = {.inner_map_fd = (uint32_t)inner_map_fd};
+    int outer_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), sizeof(fd_t), 1, &opts);
     REQUIRE(outer_map_fd > 0);
 
     // Verify we can insert the inner map into the outer map.
@@ -1751,7 +1784,7 @@ _map_reuse_test(ebpf_execution_type_t execution_type)
     REQUIRE(bpf_obj_get_info_by_fd(outer_map_fd, &info, &info_size) == 0);
     REQUIRE(info.name[0] == 0);
 
-    int port_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int port_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(port_map_fd > 0);
 
     // Pin port map.
@@ -1808,16 +1841,17 @@ _wrong_map_reuse_test(ebpf_execution_type_t execution_type)
     const char* file_name = (execution_type == EBPF_EXECUTION_NATIVE ? "map_reuse_um.dll" : "map_reuse.o");
 
     // First create and pin the maps manually.
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
-    int outer_map_fd = bpf_create_map_in_map(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), inner_map_fd, 1, 0);
+    bpf_map_create_opts opts = {.inner_map_fd = (uint32_t)inner_map_fd};
+    int outer_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), sizeof(fd_t), 1, &opts);
     REQUIRE(outer_map_fd > 0);
 
     // Pin the outer map and port map to the wrong paths so they won't match what is in the ebpf program.
     REQUIRE(bpf_obj_pin(outer_map_fd, "/ebpf/global/port_map") == 0);
 
-    int port_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int port_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(port_map_fd > 0);
 
     // Pin port map.
@@ -1860,7 +1894,7 @@ _auto_pinned_maps_test(ebpf_execution_type_t execution_type)
     fd_t outer_map_fd = bpf_obj_get("/ebpf/global/outer_map");
     REQUIRE(outer_map_fd > 0);
 
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
     __u32 outer_key = 0;
@@ -1922,7 +1956,7 @@ TEST_CASE("auto_pinned_maps_custom_path", "[end_to_end]")
     fd_t outer_map_fd = bpf_obj_get("/custompath/global/outer_map");
     REQUIRE(outer_map_fd > 0);
 
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
     __u32 outer_key = 0;
@@ -1971,14 +2005,14 @@ _map_reuse_invalid_test(ebpf_execution_type_t execution_type)
     program_info_provider_t xdp_program_info(EBPF_PROGRAM_TYPE_XDP);
 
     // Create and pin a map with a different map type than in ELF file.
-    int map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(map_fd > 0);
 
     // Pin the map.
     int error = bpf_obj_pin(map_fd, "/ebpf/global/outer_map");
     REQUIRE(error == 0);
 
-    int port_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int port_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(port_map_fd > 0);
 
     // Pin port map.
@@ -2013,10 +2047,11 @@ _map_reuse_2_test(ebpf_execution_type_t execution_type)
     const char* file_name = (execution_type == EBPF_EXECUTION_NATIVE ? "map_reuse_2_um.dll" : "map_reuse_2.o");
 
     // First create and pin the maps manually.
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
-    int outer_map_fd = bpf_create_map_in_map(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), inner_map_fd, 1, 0);
+    bpf_map_create_opts opts = {.inner_map_fd = (uint32_t)inner_map_fd};
+    int outer_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), sizeof(fd_t), 1, &opts);
     REQUIRE(outer_map_fd > 0);
 
     // Verify we can insert the inner map into the outer map.
@@ -2028,7 +2063,7 @@ _map_reuse_2_test(ebpf_execution_type_t execution_type)
     error = bpf_obj_pin(outer_map_fd, "/ebpf/global/outer_map");
     REQUIRE(error == 0);
 
-    int port_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int port_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(outer_map_fd > 0);
 
     // Pin port map.
@@ -2081,10 +2116,11 @@ _map_reuse_3_test(ebpf_execution_type_t execution_type)
     program_info_provider_t xdp_program_info(EBPF_PROGRAM_TYPE_XDP);
 
     // First create and pin the maps manually.
-    int inner_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int inner_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(inner_map_fd > 0);
 
-    int outer_map_fd = bpf_create_map_in_map(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), inner_map_fd, 1, 0);
+    bpf_map_create_opts opts = {.inner_map_fd = (uint32_t)inner_map_fd};
+    int outer_map_fd = bpf_map_create(BPF_MAP_TYPE_HASH_OF_MAPS, nullptr, sizeof(__u32), sizeof(fd_t), 1, &opts);
     REQUIRE(outer_map_fd > 0);
 
     // Verify we can insert the inner map into the outer map.
@@ -2100,7 +2136,7 @@ _map_reuse_3_test(ebpf_execution_type_t execution_type)
     error = bpf_obj_pin(inner_map_fd, "/ebpf/global/inner_map");
     REQUIRE(error == 0);
 
-    int port_map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(__u32), sizeof(__u32), 1, 0);
+    int port_map_fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, nullptr, sizeof(__u32), sizeof(__u32), 1, nullptr);
     REQUIRE(outer_map_fd > 0);
 
     // Pin port map.
@@ -2264,6 +2300,12 @@ TEST_CASE("load_native_program_negative3", "[end-to-end]")
         ERROR_OBJECT_ALREADY_EXISTS);
 
     bpf_object__close(object);
+
+    // Now that we have closed the object, try to load programs from the same module again. This should
+    // fail as the module should now be marked as "unloading".
+    REQUIRE(
+        test_ioctl_load_native_programs(
+            &provider_module_id, nullptr, MAP_COUNT, map_handles, PROGRAM_COUNT, program_handles) != ERROR_SUCCESS);
 }
 
 // Load native module and then try to load programs with incorrect params.
@@ -2284,6 +2326,12 @@ TEST_CASE("load_native_program_negative4", "[end-to-end]")
 
     REQUIRE(UuidCreate(&provider_module_id) == RPC_S_OK);
 
+    // First try to load native program without loading the native module.
+    REQUIRE(
+        test_ioctl_load_native_programs(
+            &provider_module_id, nullptr, INCORRECT_MAP_COUNT, map_handles, PROGRAM_COUNT, program_handles) ==
+        ERROR_PATH_NOT_FOUND);
+
     // Creating valid service with valid driver.
     _create_service_helper(L"droppacket_um.dll", NATIVE_DRIVER_SERVICE_NAME, &provider_module_id, &service_handle);
 
@@ -2296,8 +2344,8 @@ TEST_CASE("load_native_program_negative4", "[end-to-end]")
     // Try to load the programs by passing wrong map and program handles size. This should fail.
     REQUIRE(
         test_ioctl_load_native_programs(
-            &provider_module_id, nullptr, INCORRECT_MAP_COUNT, map_handles, PROGRAM_COUNT, program_handles) !=
-        ERROR_SUCCESS);
+            &provider_module_id, nullptr, INCORRECT_MAP_COUNT, map_handles, PROGRAM_COUNT, program_handles) ==
+        ERROR_INVALID_PARAMETER);
 
     // Delete the created service.
     Platform::_delete_service(service_handle);
@@ -2322,10 +2370,82 @@ TEST_CASE("load_native_program_negative5", "[end_to_end]")
     REQUIRE(result == -ENOENT);
 }
 
+// Load native module twice.
+TEST_CASE("load_native_program_negative6", "[end-to-end]")
+{
+    _test_helper_end_to_end test_helper;
+
+    GUID provider_module_id;
+    SC_HANDLE service_handle = nullptr;
+    SC_HANDLE service_handle2 = nullptr;
+    std::wstring service_path(SERVICE_PATH_PREFIX);
+    std::wstring service_path2(SERVICE_PATH_PREFIX);
+    size_t count_of_maps = 0;
+    size_t count_of_programs = 0;
+    set_native_module_failures(true);
+
+    REQUIRE(UuidCreate(&provider_module_id) == RPC_S_OK);
+
+    // Create a valid service with valid driver.
+    _create_service_helper(L"droppacket_um.dll", NATIVE_DRIVER_SERVICE_NAME, &provider_module_id, &service_handle);
+
+    // Load native module. It should succeed.
+    service_path = service_path + NATIVE_DRIVER_SERVICE_NAME;
+    REQUIRE(
+        test_ioctl_load_native_module(service_path, &provider_module_id, &count_of_maps, &count_of_programs) ==
+        ERROR_SUCCESS);
+
+    // Create a new service with same driver and same module id.
+    _create_service_helper(L"droppacket_um.dll", NATIVE_DRIVER_SERVICE_NAME_2, &provider_module_id, &service_handle2);
+
+    set_native_module_failures(true);
+
+    // Load native module. It should fail.
+    service_path2 = service_path2 + NATIVE_DRIVER_SERVICE_NAME_2;
+    REQUIRE(
+        test_ioctl_load_native_module(service_path2, &provider_module_id, &count_of_maps, &count_of_programs) ==
+        ERROR_OBJECT_ALREADY_EXISTS);
+}
+
 // The below tests try to load native drivers for invalid programs (that will fail verification).
 // Since verification can be skipped in bpf2c for only Debug builds, these tests are applicable
 // only for Debug build.
 #ifdef _DEBUG
+
+// Load programs from a native module which has 0 programs.
+TEST_CASE("load_native_program_negative7", "[end-to-end]")
+{
+    _test_helper_end_to_end test_helper;
+
+    GUID provider_module_id = GUID_NULL;
+    SC_HANDLE service_handle = nullptr;
+    std::wstring service_path(SERVICE_PATH_PREFIX);
+    size_t count_of_maps = 0;
+    size_t count_of_programs = 0;
+    std::wstring file_path(L"droppacket_um.dll");
+    ebpf_handle_t map_handles;
+    ebpf_handle_t program_handles;
+
+    REQUIRE(UuidCreate(&provider_module_id) == RPC_S_OK);
+
+    // Creating valid service with valid driver.
+    _create_service_helper(L"empty_um.dll", NATIVE_DRIVER_SERVICE_NAME, &provider_module_id, &service_handle);
+
+    // Load native module. It should succeed.
+    service_path = service_path + NATIVE_DRIVER_SERVICE_NAME;
+    REQUIRE(
+        test_ioctl_load_native_module(service_path, &provider_module_id, &count_of_maps, &count_of_programs) ==
+        ERROR_SUCCESS);
+
+    // Try to load the programs from the module with 0 programs.
+    REQUIRE(
+        test_ioctl_load_native_programs(&provider_module_id, nullptr, 1, &map_handles, 1, &program_handles) ==
+        ERROR_INVALID_PARAMETER);
+
+    // Delete the created service.
+    Platform::_delete_service(service_handle);
+}
+
 static void
 _load_invalid_program(_In_z_ const char* file_name, ebpf_execution_type_t execution_type, int expected_result)
 {
@@ -2356,6 +2476,18 @@ TEST_CASE("load_native_program_invalid3", "[end-to-end]")
 TEST_CASE("load_native_program_invalid4", "[end-to-end]")
 {
     _load_invalid_program("empty_um.dll", EBPF_EXECUTION_NATIVE, -EINVAL);
+}
+TEST_CASE("load_native_program_invalid5", "[end-to-end]")
+{
+    _load_invalid_program("invalid_maps3_um.dll", EBPF_EXECUTION_NATIVE, -EINVAL);
+}
+TEST_CASE("load_native_program_invalid5-non-preemptible", "[end-to-end]")
+{
+    // Setting ebpf_non_preemptible to true will ensure ebpf_native_load queues
+    // a workitem and that code path is executed.
+    ebpf_non_preemptible = true;
+    _load_invalid_program("invalid_maps3_um.dll", EBPF_EXECUTION_NATIVE, -EINVAL);
+    ebpf_non_preemptible = false;
 }
 #endif
 

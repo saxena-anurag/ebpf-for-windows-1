@@ -1022,18 +1022,119 @@ Done:
 }
 
 static ebpf_result_t
+_ebpf_core_find_matching_link(
+    ebpf_handle_t program_handle,
+    _In_ const ebpf_attach_type_t* attach_type,
+    _In_reads_bytes_(context_data_length) const uint8_t* context_data,
+    size_t context_data_length,
+    _Inout_opt_ ebpf_link_t* previous_link,
+    _Outptr_ ebpf_link_t** link)
+{
+    ebpf_result_t result = EBPF_SUCCESS;
+    ebpf_core_object_t* previous_object = (ebpf_core_object_t*)previous_link;
+    ebpf_link_t* local_link;
+    uint16_t info_size = sizeof(struct bpf_link_info);
+    size_t info_attach_data_size = sizeof(struct bpf_link_info) - FIELD_OFFSET(struct bpf_link_info, attach_data);
+
+    if (context_data_length > info_attach_data_size) {
+        result = EBPF_INVALID_ARGUMENT;
+        goto Exit;
+    }
+
+    bool match_found = FALSE;
+
+    *link = NULL;
+
+    // Enumerate all link objects starting with previous_object.
+    while (TRUE) {
+        struct bpf_link_info info = {0};
+        ebpf_object_reference_next_object(previous_object, EBPF_OBJECT_LINK, (ebpf_core_object_t**)&local_link);
+        if (previous_object != NULL)
+            ebpf_object_release_reference(previous_object);
+        if (local_link == NULL) {
+            // No more links.
+            result = EBPF_NO_MORE_KEYS;
+            break;
+        }
+        previous_object = (ebpf_core_object_t*)local_link;
+
+        result = ebpf_link_get_info(local_link, (uint8_t*)&info, &info_size);
+        if (result != EBPF_SUCCESS)
+            break;
+
+        // Compare attach type.
+        if (memcmp(&info.attach_type_uuid, attach_type, sizeof(*attach_type)) != 0)
+            continue;
+
+        // Compare attach parameter.
+        if (memcmp(&info.attach_data, context_data, context_data_length) != 0)
+            continue;
+
+        // Compare program id.
+        if (program_handle != ebpf_handle_invalid) {
+            ebpf_core_object_t* program = NULL;
+            result = ebpf_reference_object_by_handle(program_handle, EBPF_OBJECT_PROGRAM, &program);
+            if (result != EBPF_SUCCESS)
+                break;
+            if (info.prog_id != program->id) {
+                ebpf_object_release_reference(program);
+                continue;
+            }
+            ebpf_object_release_reference(program);
+        }
+
+        match_found = TRUE;
+        break;
+    }
+
+    if (match_found)
+        *link = local_link;
+
+Exit:
+    EBPF_RETURN_RESULT(result);
+}
+
+static ebpf_result_t
 _ebpf_core_protocol_unlink_program(_In_ const ebpf_operation_unlink_program_request_t* request)
 {
     EBPF_LOG_ENTRY();
-    ebpf_result_t retval;
+    ebpf_result_t retval = EBPF_SUCCESS;
     ebpf_link_t* link = NULL;
 
-    retval = ebpf_reference_object_by_handle(request->link_handle, EBPF_OBJECT_LINK, (ebpf_core_object_t**)&link);
-    if (retval != EBPF_SUCCESS) {
-        goto Done;
+    if (request->link_handle != ebpf_handle_invalid) {
+        retval = ebpf_reference_object_by_handle(request->link_handle, EBPF_OBJECT_LINK, (ebpf_core_object_t**)&link);
+        if (retval != EBPF_SUCCESS) {
+            goto Done;
+        }
+    } else if (request->attach_data_present) {
+        // This path will be taken for bpf_prog_detach and bpf_prog_detach2 APIs.
+        // Find the link object matching the unlink request parameters.
+        size_t data_length;
+        ebpf_result_t return_value = ebpf_safe_size_t_subtract(
+            request->header.length, FIELD_OFFSET(ebpf_operation_unlink_program_request_t, data), &data_length);
+        if (return_value != EBPF_SUCCESS)
+            goto Done;
+
+        ebpf_link_t* previous_link = NULL;
+        while (retval != EBPF_NO_MORE_KEYS) {
+            retval = _ebpf_core_find_matching_link(
+                request->program_handle, &request->attach_type, request->data, data_length, previous_link, &link);
+            if (retval != EBPF_SUCCESS)
+                break;
+            // Detach the link. Since _ebpf_core_find_matching_link takes a reference on the link object,
+            // the detach function will not free the link object.
+            ebpf_link_detach_program(link);
+            // Pass the link object as the previous object parameter to the _ebpf_core_find_matching_link function,
+            // which will release the reference from it.
+            previous_link = link;
+        }
+        if (retval == EBPF_NO_MORE_KEYS)
+            // No more matching links to detach.
+            retval = EBPF_SUCCESS;
     }
 
-    ebpf_link_detach_program(link);
+    if (link != NULL)
+        ebpf_link_detach_program(link);
 
 Done:
     ebpf_object_release_reference((ebpf_core_object_t*)link);
@@ -1863,7 +1964,7 @@ static ebpf_protocol_handler_t _ebpf_protocol_handlers[] = {
     DECLARE_PROTOCOL_HANDLER_VARIABLE_REQUEST_NO_REPLY(update_pinning, path, PROTOCOL_ALL_MODES),
     DECLARE_PROTOCOL_HANDLER_VARIABLE_REQUEST_FIXED_REPLY(get_pinned_object, path, PROTOCOL_ALL_MODES),
     DECLARE_PROTOCOL_HANDLER_VARIABLE_REQUEST_FIXED_REPLY(link_program, data, PROTOCOL_ALL_MODES),
-    DECLARE_PROTOCOL_HANDLER_FIXED_REQUEST_NO_REPLY(unlink_program, PROTOCOL_ALL_MODES),
+    DECLARE_PROTOCOL_HANDLER_VARIABLE_REQUEST_NO_REPLY(unlink_program, data, PROTOCOL_ALL_MODES),
     DECLARE_PROTOCOL_HANDLER_FIXED_REQUEST_NO_REPLY(close_handle, PROTOCOL_ALL_MODES),
     DECLARE_PROTOCOL_HANDLER_FIXED_REQUEST_FIXED_REPLY(get_ec_function, PROTOCOL_JIT_MODE),
     DECLARE_PROTOCOL_HANDLER_FIXED_REQUEST_VARIABLE_REPLY(get_program_info, data, PROTOCOL_ALL_MODES),
@@ -1948,25 +2049,28 @@ ebpf_core_invoke_protocol_handler(
 {
     ebpf_result_t retval;
     bool epoch_entered = false;
-    bool affinity_set = false;
     ebpf_protocol_handler_t* handler = &_ebpf_protocol_handlers[operation_id];
     ebpf_operation_header_t* request = (ebpf_operation_header_t*)input_buffer;
     ebpf_operation_header_t* reply = (ebpf_operation_header_t*)output_buffer;
 
     if (operation_id >= EBPF_COUNT_OF(_ebpf_protocol_handlers) || operation_id < EBPF_OPERATION_RESOLVE_HELPER) {
-        return EBPF_OPERATION_NOT_SUPPORTED;
+        retval = EBPF_OPERATION_NOT_SUPPORTED;
+        goto Done;
     }
 
     if (input_buffer_length > UINT16_MAX) {
-        return EBPF_INVALID_ARGUMENT;
+        retval = EBPF_INVALID_ARGUMENT;
+        goto Done;
     }
 
     if (output_buffer_length > UINT16_MAX) {
-        return EBPF_INVALID_ARGUMENT;
+        retval = EBPF_INVALID_ARGUMENT;
+        goto Done;
     }
 
     if (!input_buffer || !input_buffer_length) {
-        return EBPF_INVALID_ARGUMENT;
+        retval = EBPF_INVALID_ARGUMENT;
+        goto Done;
     }
 
     // Validate input_buffer_length.
@@ -1976,14 +2080,16 @@ ebpf_core_invoke_protocol_handler(
     case EBPF_PROTOCOL_FIXED_REQUEST_VARIABLE_REPLY:
     case EBPF_PROTOCOL_FIXED_REQUEST_FIXED_REPLY_ASYNC:
         if (input_buffer_length != handler->minimum_request_size) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         break;
     case EBPF_PROTOCOL_VARIABLE_REQUEST_NO_REPLY:
     case EBPF_PROTOCOL_VARIABLE_REQUEST_FIXED_REPLY:
     case EBPF_PROTOCOL_VARIABLE_REQUEST_VARIABLE_REPLY:
         if (input_buffer_length < handler->minimum_request_size) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         break;
     }
@@ -1993,35 +2099,31 @@ ebpf_core_invoke_protocol_handler(
     case EBPF_PROTOCOL_FIXED_REQUEST_NO_REPLY:
     case EBPF_PROTOCOL_VARIABLE_REQUEST_NO_REPLY:
         if (output_buffer || output_buffer_length) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         break;
     case EBPF_PROTOCOL_FIXED_REQUEST_FIXED_REPLY:
     case EBPF_PROTOCOL_VARIABLE_REQUEST_FIXED_REPLY:
     case EBPF_PROTOCOL_FIXED_REQUEST_FIXED_REPLY_ASYNC:
         if (!output_buffer || output_buffer_length != handler->minimum_reply_size) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         break;
     case EBPF_PROTOCOL_FIXED_REQUEST_VARIABLE_REPLY:
     case EBPF_PROTOCOL_VARIABLE_REQUEST_VARIABLE_REPLY:
         if (!output_buffer || output_buffer_length < handler->minimum_reply_size) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         break;
     }
 
     if (request->length > input_buffer_length || request->length < sizeof(*request)) {
-        return EBPF_INVALID_ARGUMENT;
-    }
-
-    uintptr_t old_affinity_mask = 0;
-
-    retval = ebpf_set_current_thread_affinity((uintptr_t)1 << ebpf_get_current_cpu(), &old_affinity_mask);
-    if (retval != EBPF_SUCCESS) {
+        retval = EBPF_INVALID_ARGUMENT;
         goto Done;
     }
-    affinity_set = true;
 
     retval = ebpf_epoch_enter();
     if (retval != EBPF_SUCCESS) {
@@ -2048,7 +2150,8 @@ ebpf_core_invoke_protocol_handler(
         // Validated above.
         _Analysis_assume_(reply);
         if (!async_context || !on_complete) {
-            return EBPF_INVALID_ARGUMENT;
+            retval = EBPF_INVALID_ARGUMENT;
+            goto Done;
         }
         retval = ebpf_async_set_completion_callback(async_context, on_complete);
         if (retval != EBPF_SUCCESS) {
@@ -2073,9 +2176,6 @@ ebpf_core_invoke_protocol_handler(
 Done:
     if (epoch_entered)
         ebpf_epoch_exit();
-
-    if (affinity_set)
-        ebpf_restore_current_thread_affinity(old_affinity_mask);
     return retval;
 }
 
