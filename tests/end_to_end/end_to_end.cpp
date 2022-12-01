@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation
 // SPDX-License-Identifier: MIT
 
-#define CATCH_CONFIG_MAIN
+// #define CATCH_CONFIG_MAIN
+#define CATCH_CONFIG_RUNNER
 
 #include <array>
 #include <chrono>
@@ -48,6 +49,8 @@ CATCH_REGISTER_LISTENER(_passed_test_log)
 
 #define BPF_PROG_TYPE_INVALID 100
 #define BPF_ATTACH_TYPE_INVALID 100
+
+_crt_memory_leaks memory_leaks;
 
 #define CONCAT(s1, s2) s1 s2
 #define DECLARE_ALL_TEST_CASES(_name, _group, _function)                              \
@@ -911,6 +914,10 @@ DECLARE_ALL_TEST_CASES("bad_map_name", "[end_to_end]", bad_map_name_um);
 TEST_CASE("enum section", "[end_to_end]")
 {
     _test_helper_end_to_end test_helper;
+
+    printf("leaking memory\n");
+    char* aa = (char*)malloc(100);
+    UNREFERENCED_PARAMETER(aa);
 
     const char* error_message = nullptr;
     ebpf_section_info_t* section_data = nullptr;
@@ -2680,4 +2687,40 @@ TEST_CASE("test_ebpf_object_set_execution_type", "[end_to_end]")
     REQUIRE(ebpf_object_get_execution_type(jit_object) == EBPF_EXECUTION_INTERPRET);
 
     bpf_object__close(jit_object);
+}
+
+void
+dump_crt_memory()
+{
+    bool result = _CrtDumpMemoryLeaks();
+    printf("dump_crt_memory: _CrtDumpMemoryLeaks returned %d\n", result);
+    if (result == true) {
+        // throw ();
+    }
+}
+
+int
+main(int argc, char* argv[])
+{
+    // global setup...
+
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDOUT);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDOUT);
+    atexit(dump_crt_memory);
+
+    int result = Catch::Session().run(argc, argv);
+
+    // global clean-up...
+
+    // bool result = _CrtDumpMemoryLeaks();
+    // printf("ANUSA: _CrtDumpMemoryLeaks returned %d\n", result);
+    // if (result == true) {
+    //     DebugBreak();
+    // }
+
+    printf("Returning from main\n");
+
+    return result;
 }

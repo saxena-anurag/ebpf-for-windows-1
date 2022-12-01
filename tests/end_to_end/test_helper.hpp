@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <crtdbg.h>
 
 class _test_helper_end_to_end
 {
@@ -11,6 +12,35 @@ class _test_helper_end_to_end
   private:
     bool ec_initialized = false;
     bool api_initialized = false;
+};
+
+class _crt_memory_leaks
+{
+  public:
+    _crt_memory_leaks()
+    {
+        printf("_crt_memory_leaks::constructor\n");
+        _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDOUT);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDOUT);
+
+        // Get the current bits
+        int32_t flags = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
+        flags |= _CRTDBG_LEAK_CHECK_DF;
+
+        // Set the new bits
+        _CrtSetDbgFlag(flags);
+    };
+    ~_crt_memory_leaks()
+    {
+        printf("_crt_memory_leaks::destructor\n");
+        // bool result = _CrtDumpMemoryLeaks();
+        // printf("ANUSA: _CrtDumpMemoryLeaks returned %d\n", result);
+        // if (result == true) {
+        //     DebugBreak();
+        // }
+    };
 };
 
 class _program_info_provider;
