@@ -79,6 +79,25 @@ ebpf_native_load_driver(_In_z_ const wchar_t* service_name);
 void
 ebpf_native_unload_driver(_In_z_ const wchar_t* service_name);
 
+/*
+_Requires_lock_held_(&_ebpf_native_client_table_lock)
+static ebpf_result_t
+_ebpf_native_find_client_by_id(_In_ const GUID* client_id, _Outptr_ ebpf_native_module_t*** module)
+{
+    ebpf_result_t result = ebpf_hash_table_find(_ebpf_native_client_table, (const uint8_t*)client_id,
+(uint8_t**)module); if (result == EBPF_SUCCESS) {
+        // Check the reference count of
+        result = EBPF_OBJECT_ALREADY_EXISTS;
+        EBPF_LOG_MESSAGE_GUID(
+            EBPF_TRACELOG_LEVEL_ERROR,
+            EBPF_TRACELOG_KEYWORD_NATIVE,
+            "_ebpf_native_client_attach_callback: Module already exists",
+            *client_id);
+        goto Done;
+    }
+}
+*/
+
 static void
 _ebpf_native_unload_work_item(_In_opt_ const void* service)
 {
