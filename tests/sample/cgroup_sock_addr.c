@@ -70,17 +70,3 @@ authorize_connect6(bpf_sock_addr_t* ctx)
 {
     return authorize_v6(ctx, &egress_connection_policy_map);
 }
-
-SEC("cgroup/recv_accept4")
-int
-authorize_recv_accept4(bpf_sock_addr_t* ctx)
-{
-    return authorize_v4(ctx, &ingress_connection_policy_map);
-}
-
-SEC("cgroup/recv_accept6")
-int
-authorize_recv_accept6(bpf_sock_addr_t* ctx)
-{
-    return authorize_v6(ctx, &ingress_connection_policy_map);
-}
