@@ -10,8 +10,8 @@
 #include <iostream>
 #include <string>
 
-const char* authorize_v4_program = "authorize_v4";
-const char* authorize_v6_program = "authorize_v6";
+const char* authorize_v4_program = "authorize_connect4";
+const char* authorize_v6_program = "authorize_connect6";
 
 typedef struct _process_entry
 {
@@ -67,22 +67,27 @@ load(int argc, char** argv)
         fprintf(stderr, "Failed to attach eBPF program\n");
         return 1;
     }
+    fprintf(stdout, "Attached v4 eBPF program\n");
     result = ebpf_program_attach(v6_program, &EBPF_ATTACH_TYPE_CGROUP_INET6_CONNECT, nullptr, 0, &v6_link);
     if (result != ERROR_SUCCESS) {
         fprintf(stderr, "Failed to attach eBPF program\n");
         return 1;
     }
+    fprintf(stdout, "Attached v6 eBPF program\n");
 
     // Pin both the programs.
     if (bpf_obj_pin(bpf_program__fd(v4_program), authorize_v4_program) < 0) {
         fprintf(stderr, "Failed to pin eBPF program [%s]: %d\n", authorize_v4_program, errno);
         return 1;
     }
+    fprintf(stdout, "Pinned v4 eBPF program to \"%s\"\n", authorize_v4_program);
     if (bpf_obj_pin(bpf_program__fd(v6_program), authorize_v6_program) < 0) {
         fprintf(stderr, "Failed to pin eBPF program [%s]: %d\n", authorize_v6_program, errno);
         return 1;
     }
+    fprintf(stdout, "Pinned v6 eBPF program to \"%s\"\n", authorize_v6_program);
 
+    fprintf(stdout, "\nDone.\n");
     return 0;
 }
 
@@ -95,15 +100,18 @@ unload(int argc, char** argv)
 
     result = ebpf_object_unpin(authorize_v4_program);
     if (result != ERROR_SUCCESS) {
-        fprintf(stderr, "Failed to unpin eBPF program: %d\n", result);
+        fprintf(stderr, "Failed to unpin eBPF program from \"%s\": %d\n", authorize_v4_program, result);
         result = 1;
     }
-    result = ebpf_object_unpin(authorize_v4_program);
+    fprintf(stdout, "Unpinned v4 eBPF program from \"%s\"\n", authorize_v4_program);
+    result = ebpf_object_unpin(authorize_v6_program);
     if (result != ERROR_SUCCESS) {
-        fprintf(stderr, "Failed to unpin eBPF link: %d\n", result);
+        fprintf(stderr, "Failed to unpin eBPF program from \"%s\": %d\n", authorize_v6_program, result);
         result = 1;
     }
+    fprintf(stdout, "Unpinned v6 eBPF program from \"%s\"\n", authorize_v6_program);
 
+    fprintf(stdout, "\nDone.\n");
     return result;
 }
 

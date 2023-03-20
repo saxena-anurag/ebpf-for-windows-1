@@ -33,6 +33,7 @@ authorize_v4(bpf_sock_addr_t* ctx, struct bpf_map_def* connection_policy_map)
 {
     connection_tuple_t tuple_key = {0};
     int* verdict = NULL;
+    int result;
 
     tuple_key.dst_ip.ipv4 = ctx->user_ip4;
     tuple_key.dst_port = ctx->user_port;
@@ -40,7 +41,10 @@ authorize_v4(bpf_sock_addr_t* ctx, struct bpf_map_def* connection_policy_map)
 
     verdict = bpf_map_lookup_elem(connection_policy_map, &tuple_key);
 
-    return (verdict != NULL) ? *verdict : BPF_SOCK_ADDR_VERDICT_PROCEED;
+    result = (verdict != NULL) ? *verdict : BPF_SOCK_ADDR_VERDICT_PROCEED;
+    bpf_printk("Returning verdict for v4 connect: %d", result);
+
+    return result;
 }
 
 __inline int
