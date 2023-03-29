@@ -13,6 +13,7 @@
 #include <Mswsock.h>
 #include <mstcpip.h>
 #include <netiodef.h>
+#include <vector>
 
 #define CLIENT_MESSAGE "request from client"
 #define SERVER_MESSAGE "response from server"

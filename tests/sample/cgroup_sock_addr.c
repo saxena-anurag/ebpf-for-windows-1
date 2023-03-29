@@ -59,20 +59,20 @@ authorize_v4(bpf_sock_addr_t* ctx, struct bpf_map_def* connection_policy_map)
     verdict = bpf_map_lookup_elem(connection_policy_map, &tuple_key);
     if (verdict == NULL) {
         // Now lookup without destination port.
-        bpf_printk("entry not found 1 for %u:%u", destination_ip, ctx->user_port);
+        // bpf_printk("entry not found 1 for %u:%u", destination_ip, ctx->user_port);
         tuple_key.destination_port = 0;
         verdict = bpf_map_lookup_elem(connection_policy_map, &tuple_key);
     }
 
     if (verdict != NULL) {
-        bpf_printk("entry found for %u", destination_ip);
+        // bpf_printk("entry found for %u", destination_ip);
         ctx->user_ip4 = verdict->destination_ip.ipv4;
-        if (tuple_key.destination_port != 0) {
+        if (verdict->destination_port != 0) {
             ctx->user_port = verdict->destination_port;
         }
         redirected = true;
     } else {
-        bpf_printk("entry not found 2 for %u", destination_ip);
+        // bpf_printk("entry not found 2 for %u", destination_ip);
     }
     update_statistics(redirected, true);
 
