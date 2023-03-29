@@ -97,8 +97,9 @@ ebpf_link_create(_Outptr_ ebpf_link_t** link)
 {
     EBPF_LOG_ENTRY();
     *link = ebpf_epoch_allocate_with_tag(sizeof(ebpf_link_t), EBPF_POOL_TAG_LINK);
-    if (*link == NULL)
+    if (*link == NULL) {
         EBPF_RETURN_RESULT(EBPF_NO_MEMORY);
+    }
 
     memset(*link, 0, sizeof(ebpf_link_t));
 
@@ -387,10 +388,7 @@ _ebpf_link_instance_invoke_batch_begin(
         goto Done;
     }
 
-    return_value = ebpf_epoch_enter();
-    if (return_value != EBPF_SUCCESS) {
-        goto Done;
-    }
+    ebpf_epoch_enter();
     epoch_entered = true;
 
     return_value = ebpf_program_reference_providers(link->program);

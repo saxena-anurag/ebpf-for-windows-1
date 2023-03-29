@@ -56,16 +56,19 @@ class _test_helper
     }
     ~_test_helper()
     {
-        if (state_initiated)
+        if (state_initiated) {
             ebpf_state_terminate();
-        if (async_initiated)
+        }
+        if (async_initiated) {
             ebpf_async_terminate();
+        }
         if (epoch_initiated) {
             ebpf_epoch_flush();
             ebpf_epoch_terminate();
         }
-        if (platform_initiated)
+        if (platform_initiated) {
             ebpf_platform_terminate();
+        }
         ebpf_object_tracking_terminate();
     }
 
@@ -193,10 +196,9 @@ TEST_CASE("hash_table_test", "[platform]")
 void
 run_in_epoch(std::function<void()> function)
 {
-    if (ebpf_epoch_enter() == EBPF_SUCCESS) {
-        function();
-        ebpf_epoch_exit();
-    }
+    ebpf_epoch_enter();
+    function();
+    ebpf_epoch_exit();
 }
 
 TEST_CASE("hash_table_stress_test", "[platform]")
@@ -239,19 +241,22 @@ TEST_CASE("hash_table_stress_test", "[platform]")
                         EBPF_HASH_TABLE_OPERATION_ANY);
                 });
             }
-            for (auto& key : keys)
+            for (auto& key : keys) {
                 run_in_epoch([&]() {
                     (void)ebpf_hash_table_find(
                         table, reinterpret_cast<const uint8_t*>(&key), reinterpret_cast<uint8_t**>(&returned_value));
                 });
-            for (auto& key : keys)
+            }
+            for (auto& key : keys) {
                 run_in_epoch([&]() {
                     (void)ebpf_hash_table_next_key(
                         table, reinterpret_cast<const uint8_t*>(&key), reinterpret_cast<uint8_t*>(&next_key));
                 });
+            }
 
-            for (auto& key : keys)
+            for (auto& key : keys) {
                 run_in_epoch([&]() { (void)ebpf_hash_table_delete(table, reinterpret_cast<const uint8_t*>(&key)); });
+            }
         }
     };
 
@@ -320,7 +325,7 @@ TEST_CASE("epoch_test_single_epoch", "[platform]")
 {
     _test_helper test_helper;
 
-    REQUIRE(ebpf_epoch_enter() == EBPF_SUCCESS);
+    ebpf_epoch_enter();
     void* memory = ebpf_epoch_allocate(10);
     ebpf_epoch_free(memory);
     ebpf_epoch_exit();
@@ -332,8 +337,7 @@ TEST_CASE("epoch_test_two_threads", "[platform]")
     _test_helper test_helper;
 
     auto epoch = []() {
-        if (ebpf_epoch_enter() != EBPF_SUCCESS)
-            return;
+        ebpf_epoch_enter();
         void* memory = ebpf_epoch_allocate(10);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -396,23 +400,21 @@ TEST_CASE("epoch_test_stale_items", "[platform]")
         auto t1 = [&]() {
             uintptr_t old_thread_affinity;
             ebpf_assert_success(ebpf_set_current_thread_affinity(1, &old_thread_affinity));
-            bool _in_epoch = (ebpf_epoch_enter() == EBPF_SUCCESS);
-            void* memory = _in_epoch ? ebpf_epoch_allocate(10) : nullptr;
+            ebpf_epoch_enter();
+            void* memory = ebpf_epoch_allocate(10);
             signal_2.signal();
             signal_1.wait();
             ebpf_epoch_free(memory);
-            if (_in_epoch)
-                ebpf_epoch_exit();
+            ebpf_epoch_exit();
         };
         auto t2 = [&]() {
             uintptr_t old_thread_affinity;
             ebpf_assert_success(ebpf_set_current_thread_affinity(2, &old_thread_affinity));
             signal_2.wait();
-            if (ebpf_epoch_enter() == EBPF_SUCCESS) {
-                void* memory = ebpf_epoch_allocate(10);
-                ebpf_epoch_free(memory);
-                ebpf_epoch_exit();
-            }
+            ebpf_epoch_enter();
+            void* memory = ebpf_epoch_allocate(10);
+            ebpf_epoch_free(memory);
+            ebpf_epoch_exit();
             signal_1.signal();
         };
 
@@ -782,8 +784,9 @@ TEST_CASE("serialize_program_info_test", "[platform]")
         ebpf_helper_function_prototype_t* out_prototype = &out_program_info->program_type_specific_helper_prototype[i];
         REQUIRE(in_prototype->helper_id == out_prototype->helper_id);
         REQUIRE(in_prototype->return_type == out_prototype->return_type);
-        for (int j = 0; j < _countof(in_prototype->arguments); j++)
+        for (int j = 0; j < _countof(in_prototype->arguments); j++) {
             REQUIRE(in_prototype->arguments[j] == out_prototype->arguments[j]);
+        }
         REQUIRE(out_prototype->name != nullptr);
         REQUIRE(strncmp(in_prototype->name, out_prototype->name, EBPF_MAX_HELPER_FUNCTION_NAME_LENGTH) == 0);
     }
@@ -865,7 +868,7 @@ TEST_CASE("async", "[platform]")
     _test_helper test_helper;
 
     auto test = [](bool complete) {
-        REQUIRE(ebpf_epoch_enter() == EBPF_SUCCESS);
+        ebpf_epoch_enter();
         struct _async_context
         {
             ebpf_result_t result;

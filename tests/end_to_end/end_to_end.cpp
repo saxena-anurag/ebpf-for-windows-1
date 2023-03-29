@@ -176,16 +176,17 @@ typedef class _ip_packet
     {
         _packet = prepare_ip_packet((address_family == AF_INET) ? ETHERNET_TYPE_IPV4 : ETHERNET_TYPE_IPV6);
         set_mac_addresses(source_mac, destination_mac);
-        if (_address_family == AF_INET)
+        if (_address_family == AF_INET) {
             (ip_addresses == nullptr) ? set_ipv4_addresses(&_test_ipv4_addrs.source, &_test_ipv4_addrs.destination)
                                       : set_ipv4_addresses(
                                             &(reinterpret_cast<const _ipv4_address_pair*>(ip_addresses))->source,
                                             &(reinterpret_cast<const _ipv4_address_pair*>(ip_addresses))->destination);
-        else
+        } else {
             (ip_addresses == nullptr) ? set_ipv6_addresses(&_test_ipv6_addrs.source, &_test_ipv6_addrs.destination)
                                       : set_ipv6_addresses(
                                             &(reinterpret_cast<const _ipv6_address_pair*>(ip_addresses))->source,
                                             &(reinterpret_cast<const _ipv6_address_pair*>(ip_addresses))->destination);
+        }
     }
     uint8_t*
     data()
@@ -2603,13 +2604,29 @@ TEST_CASE("load_native_program_invalid5", "[end-to-end]")
 {
     _load_invalid_program("invalid_maps3_um.dll", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
+
+typedef struct _ebpf_scoped_non_preemptible
+{
+    _ebpf_scoped_non_preemptible()
+    {
+        ebpf_assert_success(
+            ebpf_set_current_thread_affinity((uintptr_t)1 << ebpf_get_current_cpu(), &old_thread_affinity));
+        ebpf_non_preemptible = true;
+    }
+    ~_ebpf_scoped_non_preemptible()
+    {
+        ebpf_non_preemptible = false;
+        ebpf_restore_current_thread_affinity(old_thread_affinity);
+    }
+    uintptr_t old_thread_affinity = 0;
+} ebpf_scoped_non_preemptible_t;
+
 TEST_CASE("load_native_program_invalid5-non-preemptible", "[end-to-end]")
 {
     // Setting ebpf_non_preemptible to true will ensure ebpf_native_load queues
     // a workitem and that code path is executed.
-    ebpf_non_preemptible = true;
+    ebpf_scoped_non_preemptible_t non_preemptible;
     _load_invalid_program("invalid_maps3_um.dll", EBPF_EXECUTION_NATIVE, -EINVAL);
-    ebpf_non_preemptible = false;
 }
 #endif
 

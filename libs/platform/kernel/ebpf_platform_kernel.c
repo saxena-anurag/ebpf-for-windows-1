@@ -49,8 +49,9 @@ __drv_allocatesMem(Mem) _Must_inspect_result_
 {
     ebpf_assert(size);
     void* p = ExAllocatePoolUninitialized(NonPagedPoolNx, size, tag);
-    if (p)
+    if (p) {
         memset(p, 0, size);
+    }
     return p;
 }
 
@@ -65,8 +66,9 @@ __drv_allocatesMem(Mem) _Must_inspect_result_ _Ret_writes_maybenull_(new_size) v
     void* p = ebpf_allocate(new_size);
     if (p) {
         memcpy(p, memory, min(old_size, new_size));
-        if (new_size > old_size)
+        if (new_size > old_size) {
             memset(((char*)p) + old_size, 0, new_size - old_size);
+        }
         ebpf_free(memory);
     }
     return p;
@@ -75,16 +77,18 @@ __drv_allocatesMem(Mem) _Must_inspect_result_ _Ret_writes_maybenull_(new_size) v
 void
 ebpf_free(_Frees_ptr_opt_ void* memory)
 {
-    if (memory)
+    if (memory) {
         ExFreePool(memory);
+    }
 }
 
 __drv_allocatesMem(Mem) _Must_inspect_result_
     _Ret_writes_maybenull_(size) void* ebpf_allocate_cache_aligned_with_tag(size_t size, uint32_t tag)
 {
     void* p = ExAllocatePoolUninitialized(NonPagedPoolNxCacheAligned, size, tag);
-    if (p)
+    if (p) {
         memset(p, 0, size);
+    }
     return p;
 }
 
@@ -97,8 +101,9 @@ __drv_allocatesMem(Mem) _Must_inspect_result_
 void
 ebpf_free_cache_aligned(_Frees_ptr_opt_ void* memory)
 {
-    if (memory)
+    if (memory) {
         ExFreePool(memory);
+    }
 }
 
 ebpf_memory_descriptor_t*
@@ -134,8 +139,9 @@ void
 ebpf_unmap_memory(_Frees_ptr_opt_ ebpf_memory_descriptor_t* memory_descriptor)
 {
     EBPF_LOG_ENTRY();
-    if (!memory_descriptor)
+    if (!memory_descriptor) {
         EBPF_RETURN_VOID();
+    }
 
     MmUnmapLockedPages(
         ebpf_memory_descriptor_get_base_address(memory_descriptor), &memory_descriptor->memory_descriptor_list);
@@ -390,7 +396,7 @@ _Requires_lock_held_(*lock) _Releases_lock_(*lock) _IRQL_requires_(DISPATCH_LEVE
 _Must_inspect_result_ ebpf_result_t
 ebpf_set_current_thread_affinity(uintptr_t new_thread_affinity_mask, _Out_ uintptr_t* old_thread_affinity_mask)
 {
-    if (KeGetCurrentIrql() > PASSIVE_LEVEL) {
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL) {
         return EBPF_OPERATION_NOT_SUPPORTED;
     }
 
@@ -470,8 +476,9 @@ ebpf_allocate_non_preemptible_work_item(
 void
 ebpf_free_non_preemptible_work_item(_Frees_ptr_opt_ ebpf_non_preemptible_work_item_t* work_item)
 {
-    if (!work_item)
+    if (!work_item) {
         return;
+    }
 
     KeRemoveQueueDpc(&work_item->deferred_procedure_call);
     ebpf_free(work_item);
@@ -506,8 +513,9 @@ _ebpf_preemptible_routine(_In_ PDEVICE_OBJECT device_object, _In_opt_ void* cont
 void
 ebpf_free_preemptible_work_item(_Frees_ptr_opt_ ebpf_preemptible_work_item_t* work_item)
 {
-    if (!work_item)
+    if (!work_item) {
         return;
+    }
 
     IoFreeWorkItem(work_item->io_work_item);
     ebpf_free(work_item->work_item_context);
@@ -573,8 +581,9 @@ ebpf_allocate_timer_work_item(
     _Inout_opt_ void* work_item_context)
 {
     *timer_work_item = ebpf_allocate(sizeof(ebpf_timer_work_item_t));
-    if (*timer_work_item == NULL)
+    if (*timer_work_item == NULL) {
         return EBPF_NO_MEMORY;
+    }
 
     (*timer_work_item)->work_item_routine = work_item_routine;
     (*timer_work_item)->work_item_context = work_item_context;
@@ -600,8 +609,9 @@ ebpf_schedule_timer_work_item(_Inout_ ebpf_timer_work_item_t* work_item, uint32_
 void
 ebpf_free_timer_work_item(_Frees_ptr_opt_ ebpf_timer_work_item_t* work_item)
 {
-    if (!work_item)
+    if (!work_item) {
         return;
+    }
 
     KeCancelTimer(&work_item->timer);
     KeRemoveQueueDpc(&work_item->deferred_procedure_call);
@@ -713,10 +723,11 @@ ebpf_query_time_since_boot(bool include_suspended_time)
 _Must_inspect_result_ ebpf_result_t
 ebpf_guid_create(_Out_ GUID* new_guid)
 {
-    if (NT_SUCCESS(ExUuidCreate(new_guid)))
+    if (NT_SUCCESS(ExUuidCreate(new_guid))) {
         return EBPF_SUCCESS;
-    else
+    } else {
         return EBPF_OPERATION_NOT_SUPPORTED;
+    }
 }
 
 // Pick an arbitrary limit on string size roughly based on the size of the eBPF stack.
@@ -808,8 +819,9 @@ bool
 ebpf_should_yield_processor()
 {
     // Don't yield if we are at passive level as the scheduler can preempt us.
-    if (KeGetCurrentIrql() == PASSIVE_LEVEL)
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
         return false;
+    }
 
     // KeShouldYieldProcessor returns TRUE if the current thread should yield the processor.
     return KeShouldYieldProcessor() != FALSE;
@@ -824,4 +836,39 @@ ebpf_get_execution_context_state(_Out_ ebpf_execution_context_state_t* state)
     } else {
         state->id.thread = ebpf_get_current_thread_id();
     }
+}
+
+typedef struct _ebpf_semaphore
+{
+    KSEMAPHORE semaphore;
+} ebpf_semaphore_t;
+
+_Must_inspect_result_ ebpf_result_t
+ebpf_semaphore_create(_Outptr_ ebpf_semaphore_t** semaphore, int initial_count, int maximum_count)
+{
+    *semaphore = ebpf_allocate(sizeof(KSEMAPHORE));
+    if (*semaphore == NULL) {
+        return EBPF_NO_MEMORY;
+    }
+
+    KeInitializeSemaphore(&(*semaphore)->semaphore, initial_count, maximum_count);
+    return EBPF_SUCCESS;
+}
+
+void
+ebpf_semaphore_destroy(_Frees_ptr_opt_ ebpf_semaphore_t* semaphore)
+{
+    ebpf_free(semaphore);
+}
+
+void
+ebpf_semaphore_wait(_In_ ebpf_semaphore_t* semaphore)
+{
+    KeWaitForSingleObject(&semaphore->semaphore, Executive, KernelMode, FALSE, NULL);
+}
+
+void
+ebpf_semaphore_release(_In_ ebpf_semaphore_t* semaphore)
+{
+    KeReleaseSemaphore(&semaphore->semaphore, 0, 1, FALSE);
 }
