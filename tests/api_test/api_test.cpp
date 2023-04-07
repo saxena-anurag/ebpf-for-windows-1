@@ -261,6 +261,9 @@ TEST_CASE("pinned_map_enum", "[pinned_map_enum]") { ebpf_test_pinned_map_enum();
         _test_program_load(file, program_type, execution_type, expected_result);     \
     }
 
+#define DECLARE_TAIL_CALL_LOAD_TEST(execution_type) \
+    TEST_CASE("tailcall_load_test-" #execution_type) { tailcall_load_test(execution_type); }
+
 // Duplicate tests sleep for WAIT_TIME_IN_MS seconds. This ensures the previous driver is
 // unloaded by the time the test is re-run.
 #define DECLARE_DUPLICATE_LOAD_TEST_CASE(file, program_type, execution_type, instance, expected_result) \
@@ -292,7 +295,7 @@ DECLARE_LOAD_TEST_CASE("droppacket.sys", BPF_PROG_TYPE_UNSPEC, EBPF_EXECUTION_NA
 DECLARE_DUPLICATE_LOAD_TEST_CASE("droppacket.sys", BPF_PROG_TYPE_UNSPEC, EBPF_EXECUTION_NATIVE, 2, 0);
 
 // Load droppacket (ANY) without providing expected program type.
-DECLARE_LOAD_TEST_CASE("droppacket.o", BPF_PROG_TYPE_UNSPEC, EBPF_EXECUTION_ANY, 0);
+DECLARE_LOAD_TEST_CASE("droppacket.o", BPF_PROG_TYPE_UNSPEC, EBPF_EXECUTION_ANY, JIT_LOAD_RESULT);
 
 // Load droppacket (INTERPRET) without providing expected program type.
 DECLARE_LOAD_TEST_CASE("droppacket.o", BPF_PROG_TYPE_UNSPEC, EBPF_EXECUTION_INTERPRET, INTERPRET_LOAD_RESULT);
@@ -494,13 +497,17 @@ _test_nested_maps(bpf_map_type type)
 TEST_CASE("array_map_of_maps", "[map_in_map]") { _test_nested_maps(BPF_MAP_TYPE_ARRAY_OF_MAPS); }
 TEST_CASE("hash_map_of_maps", "[map_in_map]") { _test_nested_maps(BPF_MAP_TYPE_HASH_OF_MAPS); }
 
-TEST_CASE("tailcall_load_test", "[tailcall_load_test]")
+// TEST_CASE("tailcall_load_test", "[tailcall_load_test]")
+void
+tailcall_load_test(ebpf_execution_type_t execution_type)
 {
     int result;
     struct bpf_object* object = nullptr;
     fd_t program_fd;
+    const char* file_name =
+        (execution_type == EBPF_EXECUTION_NATIVE) ? "tail_call_multiple.sys" : "tail_call_multiple.o";
 
-    result = _program_load_helper("tail_call_multiple.o", BPF_PROG_TYPE_XDP, EBPF_EXECUTION_ANY, &object, &program_fd);
+    result = _program_load_helper(file_name, BPF_PROG_TYPE_XDP, EBPF_EXECUTION_ANY, &object, &program_fd);
     REQUIRE(result == 0);
 
     REQUIRE(program_fd > 0);
@@ -797,8 +804,12 @@ bpf_user_helpers_test(ebpf_execution_type_t execution_type)
     LsaFreeReturnBuffer(data);
 }
 
+#if !defined(CONFIG_BPF_JIT_DISABLED)
 TEST_CASE("bpf_user_helpers_test_jit", "[api_test]") { bpf_user_helpers_test(EBPF_EXECUTION_JIT); }
+DECLARE_TAIL_CALL_LOAD_TEST(EBPF_EXECUTION_JIT);
+#endif
 TEST_CASE("bpf_user_helpers_test_native", "[api_test]") { bpf_user_helpers_test(EBPF_EXECUTION_NATIVE); }
+DECLARE_TAIL_CALL_LOAD_TEST(EBPF_EXECUTION_NATIVE);
 
 // This test tests resource reclamation and clean-up after a premature/abnormal user mode application exit.
 TEST_CASE("close_unload_test", "[native_tests][native_close_cleanup_tests]")
