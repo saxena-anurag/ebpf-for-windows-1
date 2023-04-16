@@ -18,10 +18,10 @@
 #define ntohs(x) _byteswap_ushort(x)
 
 const char* authorize_v4_program = "authorize_connect4";
-const char* authorize_v6_program = "authorize_connect6";
+// const char* authorize_v6_program = "authorize_connect6";
 
-const char* egress_connection_policy_map = "egress_connection_policy_map";
-const char* egress_statistics_map = "egress_statistics_map";
+const char* egress_connection_policy_map = "policy_map";
+// const char* egress_statistics_map = "egress_statistics_map";
 
 static std::string _add_operation("add");
 static std::string _delete_operation("delete");
@@ -54,16 +54,16 @@ load(int argc, char** argv)
     ebpf_result_t result;
     bpf_object* object = nullptr;
     bpf_program* v4_program = nullptr;
-    bpf_program* v6_program = nullptr;
+    // bpf_program* v6_program = nullptr;
     bpf_link* v4_link = nullptr;
-    bpf_link* v6_link = nullptr;
+    // bpf_link* v6_link = nullptr;
     bpf_map* policy_map = nullptr;
-    bpf_map* stats_map = nullptr;
+    // bpf_map* stats_map = nullptr;
 
     UNREFERENCED_PARAMETER(argc);
     UNREFERENCED_PARAMETER(argv);
 
-    object = bpf_object__open("cgroup_sock_addr.sys");
+    object = bpf_object__open("drivers\\redirect.bpf.sys");
     if (object == nullptr) {
         fprintf(stderr, "Failed to open sock_addr eBPF program\n");
         return 1;
@@ -87,11 +87,11 @@ load(int argc, char** argv)
         return 1;
     }
 
-    v6_program = bpf_object__find_program_by_name(object, authorize_v6_program);
-    if (v6_program == nullptr) {
-        fprintf(stderr, "Failed to find v6 connect program\n");
-        return 1;
-    }
+    // v6_program = bpf_object__find_program_by_name(object, authorize_v6_program);
+    // if (v6_program == nullptr) {
+    //     fprintf(stderr, "Failed to find v6 connect program\n");
+    //     return 1;
+    // }
 
     policy_map = bpf_object__find_map_by_name(object, egress_connection_policy_map);
     if (policy_map == nullptr) {
@@ -99,11 +99,11 @@ load(int argc, char** argv)
         return 1;
     }
 
-    stats_map = bpf_object__find_map_by_name(object, egress_statistics_map);
-    if (policy_map == nullptr) {
-        fprintf(stderr, "Failed to find %s map\n", egress_statistics_map);
-        return 1;
-    }
+    // stats_map = bpf_object__find_map_by_name(object, egress_statistics_map);
+    // if (stats_map == nullptr) {
+    //     fprintf(stderr, "Failed to find %s map\n", egress_statistics_map);
+    //     return 1;
+    // }
 
     // Attach both the programs.
     result = ebpf_program_attach(v4_program, &EBPF_ATTACH_TYPE_CGROUP_INET4_CONNECT, nullptr, 0, &v4_link);
@@ -112,12 +112,12 @@ load(int argc, char** argv)
         return 1;
     }
     fprintf(stdout, "Attached v4 eBPF program\n");
-    result = ebpf_program_attach(v6_program, &EBPF_ATTACH_TYPE_CGROUP_INET6_CONNECT, nullptr, 0, &v6_link);
-    if (result != ERROR_SUCCESS) {
-        fprintf(stderr, "Failed to attach eBPF program\n");
-        return 1;
-    }
-    fprintf(stdout, "Attached v6 eBPF program\n");
+    // result = ebpf_program_attach(v6_program, &EBPF_ATTACH_TYPE_CGROUP_INET6_CONNECT, nullptr, 0, &v6_link);
+    // if (result != ERROR_SUCCESS) {
+    //     fprintf(stderr, "Failed to attach eBPF program\n");
+    //     return 1;
+    // }
+    // fprintf(stdout, "Attached v6 eBPF program\n");
 
     // Pin both the programs.
     if (bpf_obj_pin(bpf_program__fd(v4_program), authorize_v4_program) < 0) {
@@ -125,11 +125,11 @@ load(int argc, char** argv)
         return 1;
     }
     fprintf(stdout, "Pinned v4 eBPF program to \"%s\"\n", authorize_v4_program);
-    if (bpf_obj_pin(bpf_program__fd(v6_program), authorize_v6_program) < 0) {
-        fprintf(stderr, "Failed to pin eBPF program [%s]: %d\n", authorize_v6_program, errno);
-        return 1;
-    }
-    fprintf(stdout, "Pinned v6 eBPF program to \"%s\"\n", authorize_v6_program);
+    // if (bpf_obj_pin(bpf_program__fd(v6_program), authorize_v6_program) < 0) {
+    //     fprintf(stderr, "Failed to pin eBPF program [%s]: %d\n", authorize_v6_program, errno);
+    //     return 1;
+    // }
+    // fprintf(stdout, "Pinned v6 eBPF program to \"%s\"\n", authorize_v6_program);
 
     // Pin both the maps.
     if (bpf_obj_pin(bpf_map__fd(policy_map), egress_connection_policy_map) < 0) {
@@ -137,11 +137,11 @@ load(int argc, char** argv)
         return 1;
     }
     fprintf(stdout, "Pinned eBPF map to \"%s\"\n", egress_connection_policy_map);
-    if (bpf_obj_pin(bpf_map__fd(stats_map), egress_statistics_map) < 0) {
-        fprintf(stderr, "Failed to pin eBPF map [%s]: %d\n", egress_statistics_map, errno);
-        return 1;
-    }
-    fprintf(stdout, "Pinned eBPF map to \"%s\"\n", egress_statistics_map);
+    // if (bpf_obj_pin(bpf_map__fd(stats_map), egress_statistics_map) < 0) {
+    //     fprintf(stderr, "Failed to pin eBPF map [%s]: %d\n", egress_statistics_map, errno);
+    //     return 1;
+    // }
+    // fprintf(stdout, "Pinned eBPF map to \"%s\"\n", egress_statistics_map);
 
     fprintf(stdout, "\nDone.\n");
     return 0;
@@ -161,12 +161,12 @@ unload(int argc, char** argv)
     }
     fprintf(stdout, "Unpinned v4 eBPF program from \"%s\"\n", authorize_v4_program);
 
-    result = ebpf_object_unpin(authorize_v6_program);
-    if (result != ERROR_SUCCESS) {
-        fprintf(stderr, "Failed to unpin eBPF program from \"%s\": %d\n", authorize_v6_program, result);
-        result = 1;
-    }
-    fprintf(stdout, "Unpinned v6 eBPF program from \"%s\"\n", authorize_v6_program);
+    // result = ebpf_object_unpin(authorize_v6_program);
+    // if (result != ERROR_SUCCESS) {
+    //     fprintf(stderr, "Failed to unpin eBPF program from \"%s\": %d\n", authorize_v6_program, result);
+    //     result = 1;
+    // }
+    // fprintf(stdout, "Unpinned v6 eBPF program from \"%s\"\n", authorize_v6_program);
 
     result = ebpf_object_unpin(egress_connection_policy_map);
     if (result != ERROR_SUCCESS) {
@@ -175,72 +175,72 @@ unload(int argc, char** argv)
     }
     fprintf(stdout, "Unpinned eBPF map from \"%s\"\n", egress_connection_policy_map);
 
-    result = ebpf_object_unpin(egress_statistics_map);
-    if (result != ERROR_SUCCESS) {
-        fprintf(stderr, "Failed to unpin eBPF map from \"%s\": %d\n", egress_statistics_map, result);
-        result = 1;
-    }
-    fprintf(stdout, "Unpinned eBPF map from \"%s\"\n", egress_statistics_map);
+    // result = ebpf_object_unpin(egress_statistics_map);
+    // if (result != ERROR_SUCCESS) {
+    //     fprintf(stderr, "Failed to unpin eBPF map from \"%s\": %d\n", egress_statistics_map, result);
+    //     result = 1;
+    // }
+    // fprintf(stdout, "Unpinned eBPF map from \"%s\"\n", egress_statistics_map);
 
     fprintf(stdout, "\nDone.\n");
     return result;
 }
 
-int
-stats(int argc, char** argv)
-{
-    uint32_t result;
-    fd_t map_fd;
-    uint32_t key = 0;
-    uint32_t v4_redirect = 0;
-    uint32_t v4_allow = 0;
-    uint32_t v6_redirect = 0;
-    uint32_t v6_allow = 0;
+// int
+// stats(int argc, char** argv)
+// {
+//     uint32_t result;
+//     fd_t map_fd;
+//     uint32_t key = 0;
+//     uint32_t v4_redirect = 0;
+//     uint32_t v4_allow = 0;
+//     uint32_t v6_redirect = 0;
+//     uint32_t v6_allow = 0;
 
-    UNREFERENCED_PARAMETER(argc);
-    UNREFERENCED_PARAMETER(argv);
+//     UNREFERENCED_PARAMETER(argc);
+//     UNREFERENCED_PARAMETER(argv);
 
-    map_fd = bpf_obj_get((char*)egress_statistics_map);
-    if (map_fd == ebpf_fd_invalid) {
-        fprintf(stderr, "Failed to look up statistics map.\n");
-        return 1;
-    }
+//     map_fd = bpf_obj_get((char*)egress_statistics_map);
+//     if (map_fd == ebpf_fd_invalid) {
+//         fprintf(stderr, "Failed to look up statistics map.\n");
+//         return 1;
+//     }
 
-    // Get v4 values.
-    result = bpf_map_lookup_elem(map_fd, &key, &v4_allow);
-    if (result != 0) {
-        fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
-        return 1;
-    }
-    key++;
-    result = bpf_map_lookup_elem(map_fd, &key, &v4_redirect);
-    if (result != 0) {
-        fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
-        return 1;
-    }
+//     // Get v4 values.
+//     result = bpf_map_lookup_elem(map_fd, &key, &v4_allow);
+//     if (result != 0) {
+//         fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
+//         return 1;
+//     }
+//     key++;
+//     result = bpf_map_lookup_elem(map_fd, &key, &v4_redirect);
+//     if (result != 0) {
+//         fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
+//         return 1;
+//     }
 
-    // Get v6 values.
-    key++;
-    result = bpf_map_lookup_elem(map_fd, &key, &v6_allow);
-    if (result != 0) {
-        fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
-        return 1;
-    }
-    key++;
-    result = bpf_map_lookup_elem(map_fd, &key, &v6_redirect);
-    if (result != 0) {
-        fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
-        return 1;
-    }
+//     // Get v6 values.
+//     key++;
+//     result = bpf_map_lookup_elem(map_fd, &key, &v6_allow);
+//     if (result != 0) {
+//         fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
+//         return 1;
+//     }
+//     key++;
+//     result = bpf_map_lookup_elem(map_fd, &key, &v6_redirect);
+//     if (result != 0) {
+//         fprintf(stderr, "Failed to read entry from stats map: %d\n", result);
+//         return 1;
+//     }
 
-    printf("STATISTICS:\n");
-    printf("  Allowed v4    : %d\n", v4_allow);
-    printf("  Allowed v6    : %d\n", v6_allow);
-    printf("  Redirected v4 : %d\n", v4_redirect);
-    printf("  Redirected v6 : %d\n\n", v6_redirect);
+//     printf("STATISTICS:\n");
+//     printf("  Allowed v4    : %d\n", v4_allow);
+//     printf("  Allowed v6    : %d\n", v6_allow);
+//     printf("  Redirected v4 : %d\n", v4_redirect);
+//     printf("  Redirected v6 : %d\n\n", v6_redirect);
 
-    return 0;
-}
+//     return 0;
+// }
 
 int
 proxy(int argc, char** argv)
@@ -307,6 +307,8 @@ proxy(int argc, char** argv)
     INET_SET_ADDRESS(family1, (PUCHAR)&value.destination_ip, INETADDR_ADDRESS((PSOCKADDR)&proxy_ip));
 
     key.destination_port = destination_port;
+    key.protocol = IPPROTO_TCP;
+
     value.destination_port = proxy_port;
 
     // printf("reached 4\n");
@@ -350,7 +352,7 @@ struct
 } commands[]{
     {"load", "load\tLoad the sock_addr eBPF program", load},
     {"unload", "unload\tUnload the sock_addr eBPF program", unload},
-    {"stats", "stats\tPrint the stats for the eBPF program", stats},
+    // {"stats", "stats\tPrint the stats for the eBPF program", stats},
     {"proxy", "proxy {add|delete} dst_ip dst_port proxy_ip proxy_port\tConfigure proxy", proxy}};
 
 void
