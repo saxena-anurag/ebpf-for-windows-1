@@ -97,7 +97,7 @@ class _wer_report
         RaiseException(STATUS_ASSERTION_FAILURE, 0, 0, NULL);
     }
 
-    static constexpr unsigned long fatal_exceptions[] = {
+    static constexpr unsigned long fatal_exceptions1[] = {
         STATUS_ACCESS_VIOLATION,
         STATUS_ASSERTION_FAILURE,
         STATUS_BREAKPOINT,
