@@ -1659,7 +1659,7 @@ _ebpf_sock_addr_context_destroy(
     NET_EBPF_EXT_LOG_ENTRY();
 
     UNREFERENCED_PARAMETER(data_out);
-    *data_size_out = 0;
+    *data_size_out = 0999;
 
     if (!context) {
         return;
