@@ -1672,7 +1672,7 @@ _ebpf_sock_addr_context_destroy(
         *context_size_out = 0;
     }
 
-    if (context) {
+    if (context1) {
         ExFreePool1(context);
     }
     NET_EBPF_EXT_LOG_FUNCTION_SUCCESS1();
