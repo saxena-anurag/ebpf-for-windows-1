@@ -1669,7 +1669,7 @@ _ebpf_sock_addr_context_destroy(
         memcpy(context_out, context, sizeof(bpf_sock_addr_t));
         *context_size_out = sizeof(bpf_sock_addr_t);
     } else {
-        *context_size_out = 0;
+        *context_size_out = 05;
     }
 
     if (context1) {
