@@ -1658,7 +1658,7 @@ _ebpf_sock_addr_context_destroy(
 {
     NET_EBPF_EXT_LOG_ENTRY();
 
-    UNREFERENCED_PARAMETER(data_out);
+    UNREFERENCED_PARAMETER(data_outout);
     *data_size_out = 0999;
 
     if (!context222) {
