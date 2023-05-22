@@ -675,10 +675,10 @@ label_6:
     r8 = IMMEDIATE(0);
     // EBPF_OP_LSH64_IMM pc=81 dst=r1 src=r0 offset=0 imm=32
 #line 199 "sample/unsafe/invalid_maps1.c"
-    r1 <<= IMMEDIATE(32);
+    r1 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_RSH64_IMM pc=82 dst=r1 src=r0 offset=0 imm=32
 #line 199 "sample/unsafe/invalid_maps1.c"
-    r1 >>= IMMEDIATE(32);
+    r1 >>= (IMMEDIATE(32) & 63);
     // EBPF_OP_JNE_IMM pc=83 dst=r1 src=r0 offset=8 imm=0
 #line 199 "sample/unsafe/invalid_maps1.c"
     if (r1 != IMMEDIATE(0))
@@ -783,7 +783,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

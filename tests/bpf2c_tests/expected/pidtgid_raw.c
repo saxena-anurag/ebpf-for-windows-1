@@ -117,7 +117,7 @@ func(void* context)
     *(uint32_t*)(uintptr_t)(r10 + OFFSET(-8)) = (uint32_t)r0;
     // EBPF_OP_RSH64_IMM pc=9 dst=r0 src=r0 offset=0 imm=32
 #line 45 "sample/pidtgid.c"
-    r0 >>= IMMEDIATE(32);
+    r0 >>= (IMMEDIATE(32) & 63);
     // EBPF_OP_STXW pc=10 dst=r10 src=r0 offset=-12 imm=0
 #line 44 "sample/pidtgid.c"
     *(uint32_t*)(uintptr_t)(r10 + OFFSET(-12)) = (uint32_t)r0;
@@ -199,7 +199,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

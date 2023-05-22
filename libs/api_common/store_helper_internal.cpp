@@ -18,11 +18,11 @@ _open_ebpf_store_key(_Out_ ebpf_registry_key_t* store_key)
     // Open root registry path.
     *store_key = nullptr;
 
-    // First try to open the HKLM registry key.
-    uint32_t result = open_registry_key(root_registry_key_local_machine, EBPF_STORE_REGISTRY_PATH, KEY_READ, store_key);
+    // First try to open the HKCU registry key.
+    uint32_t result = open_registry_key(root_registry_key_current_user, EBPF_STORE_REGISTRY_PATH, KEY_READ, store_key);
     if (result != ERROR_SUCCESS) {
-        // Failed to open ebpf store path in HKLM. Fall back to HKCU.
-        result = open_registry_key(root_registry_key_current_user, EBPF_STORE_REGISTRY_PATH, KEY_READ, store_key);
+        // Failed to open ebpf store path in HKCU. Fall back to HKLM.
+        result = open_registry_key(root_registry_key_local_machine, EBPF_STORE_REGISTRY_PATH, KEY_READ, store_key);
     }
 
     return result;
@@ -230,13 +230,13 @@ _load_program_data_information(
                 goto Exit;
             }
 
-            program_information->program_type_specific_helper_prototype =
-                (ebpf_helper_function_prototype_t*)ebpf_allocate(
-                    helper_count * sizeof(ebpf_helper_function_prototype_t));
-            if (program_information->program_type_specific_helper_prototype == nullptr) {
+            ebpf_helper_function_prototype_t* helper_prototype = (ebpf_helper_function_prototype_t*)ebpf_allocate(
+                helper_count * sizeof(ebpf_helper_function_prototype_t));
+            if (helper_prototype == nullptr) {
                 result = EBPF_NO_MEMORY;
                 goto Exit;
             }
+            program_information->program_type_specific_helper_prototype = helper_prototype;
 
             // Add space for null terminator.
             max_helper_name_size += 1;
@@ -257,8 +257,7 @@ _load_program_data_information(
                     goto Exit;
                 }
 
-                result = _load_helper_prototype(
-                    helper_key, helper_name, &program_information->program_type_specific_helper_prototype[index]);
+                result = _load_helper_prototype(helper_key, helper_name, &helper_prototype[index]);
                 if (result != EBPF_SUCCESS) {
                     goto Exit;
                 }

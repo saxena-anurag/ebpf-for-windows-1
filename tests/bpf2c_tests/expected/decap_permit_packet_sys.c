@@ -274,7 +274,7 @@ decapsulate_permit_packet(void* context)
     r5 = *(uint8_t*)(uintptr_t)(r4 + OFFSET(0));
     // EBPF_OP_LSH64_IMM pc=15 dst=r5 src=r0 offset=0 imm=2
 #line 105 "sample/decap_permit_packet.c"
-    r5 <<= IMMEDIATE(2);
+    r5 <<= (IMMEDIATE(2) & 63);
     // EBPF_OP_AND64_IMM pc=16 dst=r5 src=r0 offset=0 imm=60
 #line 105 "sample/decap_permit_packet.c"
     r5 &= IMMEDIATE(60);
@@ -415,10 +415,10 @@ decapsulate_permit_packet(void* context)
     r1 = r0;
     // EBPF_OP_LSH64_IMM pc=58 dst=r1 src=r0 offset=0 imm=32
 #line 41 "sample/decap_permit_packet.c"
-    r1 <<= IMMEDIATE(32);
+    r1 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_ARSH64_IMM pc=59 dst=r1 src=r0 offset=0 imm=32
 #line 41 "sample/decap_permit_packet.c"
-    r1 = (int64_t)r1 >> (uint32_t)IMMEDIATE(32);
+    r1 = (int64_t)r1 >> (uint32_t)(IMMEDIATE(32) & 63);
     // EBPF_OP_MOV64_IMM pc=60 dst=r0 src=r0 offset=0 imm=2
 #line 41 "sample/decap_permit_packet.c"
     r0 = IMMEDIATE(2);
@@ -565,10 +565,10 @@ label_1:
     r1 = r0;
     // EBPF_OP_LSH64_IMM pc=103 dst=r1 src=r0 offset=0 imm=32
 #line 70 "sample/decap_permit_packet.c"
-    r1 <<= IMMEDIATE(32);
+    r1 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_ARSH64_IMM pc=104 dst=r1 src=r0 offset=0 imm=32
 #line 70 "sample/decap_permit_packet.c"
-    r1 = (int64_t)r1 >> (uint32_t)IMMEDIATE(32);
+    r1 = (int64_t)r1 >> (uint32_t)(IMMEDIATE(32) & 63);
     // EBPF_OP_MOV64_IMM pc=105 dst=r0 src=r0 offset=0 imm=2
 #line 70 "sample/decap_permit_packet.c"
     r0 = IMMEDIATE(2);
@@ -623,7 +623,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

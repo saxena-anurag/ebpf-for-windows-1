@@ -852,10 +852,10 @@ label_7:
     r8 = IMMEDIATE(0);
     // EBPF_OP_LSH64_IMM pc=88 dst=r1 src=r0 offset=0 imm=32
 #line 192 "sample/unsafe/invalid_helpers.c"
-    r1 <<= IMMEDIATE(32);
+    r1 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_RSH64_IMM pc=89 dst=r1 src=r0 offset=0 imm=32
 #line 192 "sample/unsafe/invalid_helpers.c"
-    r1 >>= IMMEDIATE(32);
+    r1 >>= (IMMEDIATE(32) & 63);
     // EBPF_OP_JNE_IMM pc=90 dst=r1 src=r0 offset=8 imm=0
 #line 192 "sample/unsafe/invalid_helpers.c"
     if (r1 != IMMEDIATE(0))
@@ -960,7 +960,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

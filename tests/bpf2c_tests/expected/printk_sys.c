@@ -340,7 +340,7 @@ func(void* context)
     *(uint64_t*)(uintptr_t)(r10 + OFFSET(-32)) = (uint64_t)r1;
     // EBPF_OP_RSH64_IMM pc=34 dst=r8 src=r0 offset=0 imm=32
 #line 28 "sample/printk.c"
-    r8 >>= IMMEDIATE(32);
+    r8 >>= (IMMEDIATE(32) & 63);
     // EBPF_OP_MOV64_REG pc=35 dst=r1 src=r10 offset=0 imm=0
 #line 28 "sample/printk.c"
     r1 = r10;
@@ -820,7 +820,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

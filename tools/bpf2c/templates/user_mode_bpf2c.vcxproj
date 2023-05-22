@@ -9,21 +9,25 @@
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="FuzzerDebug|x64">
+      <Configuration>FuzzerDebug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="$(ProgramName)_dll.c" />
+    <ClCompile Include="$(FileName)_dll.c" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{1baf5f74-b71f-4088-8677-f27070302b59}</ProjectGuid>
-    <RootNamespace>$(ProgramName)dll</RootNamespace>
+    <RootNamespace>$(FileName)dll</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>$(ProgramName)_um</ProjectName>
+    <ProjectName>$(FileName)_um</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup>
@@ -43,7 +47,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <LinkIncremental>false</LinkIncremental>
-    <TargetName>$(ProgramName)_um</TargetName>
+    <TargetName>$(FileName)_um</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -60,7 +64,25 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PreBuildEvent>
-      <Command>$(BinDir)bpf2c.exe --no-verify --bpf $(ProgramName).o --dll $(AdditionalOptions) &gt;$(ProgramName)_dll.c</Command>
+      <Command>$(BinDir)bpf2c.exe --bpf $(FileName).o --dll $(AdditionalOptions) &gt;$(FileName)_dll.c</Command>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='FuzzerDebug|x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(IncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4189;4245;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+    </Link>
+    <PreBuildEvent>
+      <Command>$(BinDir)bpf2c.exe --bpf $(FileName).o --dll $(AdditionalOptions) &gt;$(FileName)_dll.c</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -80,9 +102,12 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PreBuildEvent>
-      <Command>$(BinDir)bpf2c.exe --bpf $(ProgramName).o --dll $(AdditionalOptions) &gt;$(ProgramName)_dll.c</Command>
+      <Command>$(BinDir)bpf2c.exe --bpf $(FileName).o --dll $(AdditionalOptions) &gt;$(FileName)_dll.c</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
+  <ItemGroup Condition="$(ResourceFile)!=''">
+    <ResourceCompile Include="$(ResourceFile)" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

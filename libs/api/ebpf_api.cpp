@@ -2508,8 +2508,8 @@ _Requires_lock_not_held_(_ebpf_state_mutex) static ebpf_result_t
 
     try {
         if (result == EBPF_SUCCESS) {
+            std::unique_lock lock(_ebpf_state_mutex);
             for (auto& map : object->maps) {
-                std::unique_lock lock(_ebpf_state_mutex);
                 _ebpf_maps.insert(std::pair<ebpf_handle_t, ebpf_map_t*>(map->map_handle, map));
             }
         }
@@ -3689,8 +3689,12 @@ _ebpf_ring_buffer_map_async_query_completion(_Inout_ void* completion_context) n
                 async_query_request,
                 subscription->reply,
                 get_async_ioctl_operation_overlapped(subscription->async_ioctl_completion)));
-            if (result == EBPF_PENDING) {
-                result = EBPF_SUCCESS;
+            if (result != EBPF_SUCCESS) {
+                if (result == EBPF_PENDING) {
+                    result = EBPF_SUCCESS;
+                } else {
+                    subscription->async_ioctl_failed = true;
+                }
             }
         }
     }
@@ -3779,8 +3783,12 @@ ebpf_ring_buffer_map_subscribe(
             async_query_request,
             local_subscription->reply,
             get_async_ioctl_operation_overlapped(local_subscription->async_ioctl_completion)));
-        if (result == EBPF_PENDING) {
-            result = EBPF_SUCCESS;
+        if (result != EBPF_SUCCESS) {
+            if (result == EBPF_PENDING) {
+                result = EBPF_SUCCESS;
+            } else {
+                local_subscription->async_ioctl_failed = true;
+            }
         }
 
         // If the async IOCTL failed, then free the subscription object.

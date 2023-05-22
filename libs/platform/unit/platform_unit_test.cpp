@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation
 // SPDX-License-Identifier: MIT
 
+#define EBPF_FILE_ID EBPF_FILE_ID_PLATFORM_UNIT_TESTS
+
 #include "api_common.hpp"
 #include "catch_wrapper.hpp"
 #include "ebpf_async.h"
@@ -38,6 +40,19 @@ typedef struct _free_ebpf_pinning_table
 } free_ebpf_pinning_table_t;
 
 typedef std::unique_ptr<ebpf_pinning_table_t, free_ebpf_pinning_table_t> ebpf_pinning_table_ptr;
+
+typedef struct _free_trampoline_table
+{
+    void
+    operator()(_In_opt_ _Post_invalid_ ebpf_trampoline_table_t* table)
+    {
+        if (table != nullptr) {
+            ebpf_free_trampoline_table(table);
+        }
+    }
+} free_trampoline_table_t;
+
+typedef std::unique_ptr<ebpf_trampoline_table_t, free_trampoline_table_t> ebpf_trampoline_table_ptr;
 
 class _test_helper
 {
@@ -289,10 +304,10 @@ TEST_CASE("pinning_test", "[platform]")
     ebpf_utf8_string_t bar = EBPF_UTF8_STRING_FROM_CONST_STRING("bar");
 
     REQUIRE(
-        ebpf_object_initialize(
+        EBPF_OBJECT_INITIALIZE(
             &an_object.object, EBPF_OBJECT_MAP, [](ebpf_core_object_t*) {}, NULL) == EBPF_SUCCESS);
     REQUIRE(
-        ebpf_object_initialize(
+        EBPF_OBJECT_INITIALIZE(
             &another_object.object, EBPF_OBJECT_MAP, [](ebpf_core_object_t*) {}, NULL) == EBPF_SUCCESS);
 
     ebpf_pinning_table_ptr pinning_table;
@@ -309,7 +324,7 @@ TEST_CASE("pinning_test", "[platform]")
     REQUIRE(ebpf_pinning_table_find(pinning_table.get(), &foo, (ebpf_core_object_t**)&some_object) == EBPF_SUCCESS);
     REQUIRE(an_object.object.base.reference_count == 3);
     REQUIRE(some_object == &an_object);
-    ebpf_object_release_reference(&some_object->object);
+    EBPF_OBJECT_RELEASE_REFERENCE(&some_object->object);
     REQUIRE(ebpf_pinning_table_delete(pinning_table.get(), &foo) == EBPF_SUCCESS);
     REQUIRE(another_object.object.base.reference_count == 2);
 
@@ -317,8 +332,8 @@ TEST_CASE("pinning_test", "[platform]")
     REQUIRE(an_object.object.base.reference_count == 1);
     REQUIRE(another_object.object.base.reference_count == 1);
 
-    ebpf_object_release_reference(&an_object.object);
-    ebpf_object_release_reference(&another_object.object);
+    EBPF_OBJECT_RELEASE_REFERENCE(&an_object.object);
+    EBPF_OBJECT_RELEASE_REFERENCE(&another_object.object);
 }
 
 TEST_CASE("epoch_test_single_epoch", "[platform]")
@@ -436,108 +451,11 @@ TEST_CASE("epoch_test_stale_items", "[platform]")
 
 static auto provider_function = []() { return EBPF_SUCCESS; };
 
-static ebpf_extension_dispatch_table_t test_provider_dispatch_table = {
-    0, sizeof(ebpf_extension_dispatch_table_t), provider_function};
-
-static NTSTATUS
-test_provider_attach_client(
-    HANDLE nmr_binding_handle,
-    _Inout_ void* provider_context,
-    _In_ const NPI_REGISTRATION_INSTANCE* client_registration_instance,
-    _In_ const void* client_binding_context,
-    _In_ const void* client_dispatch,
-    _Out_ void** provider_binding_context,
-    _Out_ const void** provider_dispatch)
-{
-    ebpf_extension_provider_t* provider = (ebpf_extension_provider_t*)provider_context;
-    UNREFERENCED_PARAMETER(nmr_binding_handle);
-    UNREFERENCED_PARAMETER(provider);
-    UNREFERENCED_PARAMETER(client_registration_instance);
-    UNREFERENCED_PARAMETER(client_binding_context);
-    UNREFERENCED_PARAMETER(client_dispatch);
-    *provider_binding_context = nullptr;
-    *provider_dispatch = &test_provider_dispatch_table;
-    return STATUS_SUCCESS;
-};
-
-static NTSTATUS
-test_provider_detach_client(_In_ const void* provider_binding_context)
-{
-    UNREFERENCED_PARAMETER(provider_binding_context);
-    return STATUS_SUCCESS;
-};
-
-TEST_CASE("extension_test", "[platform]")
-{
-    _test_helper test_helper;
-
-    auto client_function = []() { return EBPF_SUCCESS; };
-    ebpf_extension_dispatch_table_t client_dispatch_table = {
-        0, sizeof(ebpf_extension_dispatch_table_t), client_function};
-    ebpf_extension_data_t client_data{};
-    ebpf_extension_data_t provider_data{};
-    GUID interface_id;
-    ebpf_result_t result;
-
-    const ebpf_extension_dispatch_table_t* returned_provider_dispatch_table;
-    const ebpf_extension_data_t* returned_provider_data;
-
-    ebpf_extension_provider_t* provider_context = nullptr;
-    ebpf_extension_client_t* client_context = nullptr;
-    void* provider_binding_context = nullptr;
-
-    ebpf_assert_success(ebpf_guid_create(&interface_id));
-    int callback_context = 0;
-    int client_binding_context = 0;
-    GUID client_module_id = {};
-    GUID provider_module_id = {};
-    REQUIRE(ebpf_guid_create(&client_module_id) == EBPF_SUCCESS);
-    REQUIRE(ebpf_guid_create(&provider_module_id) == EBPF_SUCCESS);
-    REQUIRE(
-        ebpf_provider_load(
-            &provider_context,
-            &interface_id,
-            &provider_module_id,
-            nullptr,
-            &provider_data,
-            &test_provider_dispatch_table,
-            &callback_context,
-            (NPI_PROVIDER_ATTACH_CLIENT_FN*)test_provider_attach_client,
-            (NPI_PROVIDER_DETACH_CLIENT_FN*)test_provider_detach_client,
-            nullptr) == EBPF_SUCCESS);
-
-    result = ebpf_extension_load(
-        &client_context,
-        &interface_id,
-        &provider_module_id,
-        &client_module_id,
-        &client_binding_context,
-        &client_data,
-        &client_dispatch_table,
-        &provider_binding_context,
-        &returned_provider_data,
-        &returned_provider_dispatch_table,
-        nullptr);
-    if (result != EBPF_SUCCESS) {
-        ebpf_provider_unload(provider_context);
-    }
-    REQUIRE(result == EBPF_SUCCESS);
-
-    REQUIRE(returned_provider_data == &provider_data);
-    REQUIRE(returned_provider_dispatch_table == &test_provider_dispatch_table);
-
-    ebpf_extension_unload(client_context);
-#pragma warning(push)
-#pragma warning(disable : 6001) // Using uninitialized memory 'provider_context'.
-    ebpf_provider_unload(provider_context);
-#pragma warning(pop)
-}
-
 TEST_CASE("trampoline_test", "[platform]")
 {
     _test_helper test_helper;
 
-    ebpf_trampoline_table_t* table = NULL;
+    ebpf_trampoline_table_ptr table;
     ebpf_result_t (*test_function)();
     auto provider_function1 = []() { return EBPF_SUCCESS; };
     ebpf_result_t (*function_pointer1)() = provider_function1;
@@ -551,31 +469,35 @@ TEST_CASE("trampoline_test", "[platform]")
     const void* helper_functions2[] = {(void*)function_pointer2};
     ebpf_helper_function_addresses_t helper_function_addresses2 = {
         EBPF_COUNT_OF(helper_functions1), (uint64_t*)helper_functions2};
+    ebpf_trampoline_table_t* local_table = nullptr;
 
-    REQUIRE(ebpf_allocate_trampoline_table(1, &table) == EBPF_SUCCESS);
+    REQUIRE(ebpf_allocate_trampoline_table(1, &local_table) == EBPF_SUCCESS);
+    table.reset(local_table);
+
     REQUIRE(
         ebpf_update_trampoline_table(
-            table,
+            table.get(),
             EBPF_COUNT_OF(provider_helper_function_ids),
             provider_helper_function_ids,
             &helper_function_addresses1) == EBPF_SUCCESS);
     REQUIRE(
         ebpf_get_trampoline_function(
-            table, EBPF_MAX_GENERAL_HELPER_FUNCTION + 1, reinterpret_cast<void**>(&test_function)) == EBPF_SUCCESS);
+            table.get(), EBPF_MAX_GENERAL_HELPER_FUNCTION + 1, reinterpret_cast<void**>(&test_function)) ==
+        EBPF_SUCCESS);
 
-    // Verify that the trampoline function invokes the provider function
+    // Verify that the trampoline function invokes the provider function.
     REQUIRE(test_function() == EBPF_SUCCESS);
 
     REQUIRE(
         ebpf_update_trampoline_table(
-            table,
+            table.get(),
             EBPF_COUNT_OF(provider_helper_function_ids),
             provider_helper_function_ids,
             &helper_function_addresses2) == EBPF_SUCCESS);
 
-    // Verify that the trampoline function now invokes the new provider function
+    // Verify that the trampoline function now invokes the new provider function.
     REQUIRE(test_function() == EBPF_OBJECT_ALREADY_EXISTS);
-    ebpf_free_trampoline_table(table);
+    ebpf_free_trampoline_table(table.release());
 }
 
 struct ebpf_security_descriptor_t_free
@@ -780,8 +702,10 @@ TEST_CASE("serialize_program_info_test", "[platform]")
         out_program_info->count_of_program_type_specific_helpers);
     REQUIRE(out_program_info->program_type_specific_helper_prototype != nullptr);
     for (uint32_t i = 0; i < in_program_info.count_of_program_type_specific_helpers; i++) {
-        ebpf_helper_function_prototype_t* in_prototype = &in_program_info.program_type_specific_helper_prototype[i];
-        ebpf_helper_function_prototype_t* out_prototype = &out_program_info->program_type_specific_helper_prototype[i];
+        const ebpf_helper_function_prototype_t* in_prototype =
+            &in_program_info.program_type_specific_helper_prototype[i];
+        const ebpf_helper_function_prototype_t* out_prototype =
+            &out_program_info->program_type_specific_helper_prototype[i];
         REQUIRE(in_prototype->helper_id == out_prototype->helper_id);
         REQUIRE(in_prototype->return_type == out_prototype->return_type);
         for (int j = 0; j < _countof(in_prototype->arguments); j++) {
@@ -1063,4 +987,12 @@ TEST_CASE("interlocked operations", "[platform]")
     void* p = &a;
     REQUIRE(ebpf_interlocked_compare_exchange_pointer(&p, &b, &a) == &a);
     REQUIRE(ebpf_interlocked_compare_exchange_pointer(&p, &b, &a) == &b);
+}
+
+TEST_CASE("get_authentication_id", "[platform]")
+{
+    _test_helper test_helper;
+    uint64_t authentication_id = 0;
+
+    REQUIRE(ebpf_platform_get_authentication_id(&authentication_id) == EBPF_SUCCESS);
 }

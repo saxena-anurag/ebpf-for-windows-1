@@ -88,8 +88,6 @@ extern "C"
     typedef struct _ebpf_non_preemptible_work_item ebpf_non_preemptible_work_item_t;
     typedef struct _ebpf_preemptible_work_item ebpf_preemptible_work_item_t;
     typedef struct _ebpf_timer_work_item ebpf_timer_work_item_t;
-    typedef struct _ebpf_extension_client ebpf_extension_client_t;
-    typedef struct _ebpf_extension_provider ebpf_extension_provider_t;
     typedef struct _ebpf_helper_function_prototype ebpf_helper_function_prototype_t;
 
     typedef struct _ebpf_trampoline_table ebpf_trampoline_table_t;
@@ -795,6 +793,24 @@ extern "C"
      * @return Returns the original value of memory pointed to by
      *  destination.
      */
+    int64_t
+    ebpf_interlocked_compare_exchange_int64(_Inout_ volatile int64_t* destination, int64_t exchange, int64_t comparand);
+
+    /**
+     * @brief Performs an atomic operation that compares the input value pointed
+     *  to by destination with the value of comparand and replaces it with
+     *  exchange.
+     *
+     * @param[in, out] destination A pointer to the input value that is compared
+     *  with the value of comparand.
+     * @param[in] exchange Specifies the output value pointed to by destination
+     *  if the input value pointed to by destination equals the value of
+     *  comparand.
+     * @param[in] comparand Specifies the value that is compared with the input
+     *  value pointed to by destination.
+     * @return Returns the original value of memory pointed to by
+     *  destination.
+     */
     void*
     ebpf_interlocked_compare_exchange_pointer(
         _Inout_ void* volatile* destination, _In_opt_ const void* exchange, _In_opt_ const void* comparand);
@@ -858,128 +874,6 @@ extern "C"
      */
     int64_t
     ebpf_interlocked_xor_int64(_Inout_ volatile int64_t* destination, int64_t mask);
-
-    typedef ebpf_result_t (*ebpf_extension_change_callback_t)(
-        _In_ const void* client_binding_context, _In_opt_ const ebpf_extension_data_t* provider_data);
-
-    /**
-     * @brief Load an extension and get its dispatch table.
-     *
-     * @param[out] client_context Context used to unload the extension.
-     * @param[in] interface_id GUID representing the identity of the extension interface.
-     * @param[in] expected_provider_module_id GUID representing the expected identity of the provider.
-     * @param[in] client_module_id GUID representing the identity of the client.
-     * @param[in] extension_client_context Opaque per-instance pointer passed to the extension.
-     * @param[in] client_data Opaque client data passed to the extension or
-        NULL if there is none.
-     * @param[in] client_data_length Length of the client data.
-     * @param[in] client_dispatch_table Table of function pointers the client
-     *  exposes or NULL if there is none.
-     * @param[out] provider_binding_context Provider binding context. Can be NULL.
-     * @param[out] provider_data Opaque provider data. Can be NULL.
-     * @param[out] provider_dispatch_table Table of function pointers the
-     *  provider exposes. Can be NULL.
-     * @param[in] extension_changed Callback invoked when a provider attaches
-     *  or detaches. NULL if not used.
-     * @retval EBPF_SUCCESS The operation was successful.
-     * @retval EBPF_NOT_FOUND The provider was not found.
-     * @retval EBPF_NO_MEMORY Unable to allocate resources for this
-     *  operation.
-     */
-    _Must_inspect_result_ ebpf_result_t
-    ebpf_extension_load(
-        _Outptr_ ebpf_extension_client_t** client_context,
-        _In_ const GUID* interface_id,
-        _In_ const GUID* expected_provider_module_id,
-        _In_ const GUID* client_module_id,
-        _In_ const void* extension_client_context,
-        _In_opt_ const ebpf_extension_data_t* client_data,
-        _In_opt_ const ebpf_extension_dispatch_table_t* client_dispatch_table,
-        _Outptr_opt_ void** provider_binding_context,
-        _Outptr_opt_ const ebpf_extension_data_t** provider_data,
-        _Outptr_opt_ const ebpf_extension_dispatch_table_t** provider_dispatch_table,
-        _In_opt_ ebpf_extension_change_callback_t extension_changed);
-
-    /**
-     * @brief Helper function that returns an opaque client context from an extension client.
-     *
-     * @param[in] extension_client_binding_context Opaque pointer to an extension client binding context. This is the
-     * same as the extension_client_binding_context input parameter obtained in the _ebpf_extension_dispatch_function
-     * callback function.
-     *
-     * @returns Pointer to opaque per-instance context that was passed in call to ebpf_extension_load, or NULL on
-     * failure.
-     */
-    void*
-    ebpf_extension_get_client_context(_In_ const void* extension_client_binding_context);
-
-    GUID
-    ebpf_extension_get_provider_guid(_In_ const void* extension_client_binding_context);
-
-    /**
-     * @brief Unload an extension.
-     *
-     * @param[in] client_context Context of the extension to unload.
-     */
-    void
-    ebpf_extension_unload(_Frees_ptr_opt_ ebpf_extension_client_t* client_context);
-
-    /**
-     * @brief Prevent extension provider from unloading.
-     *
-     * @param[in,out] client_context Client context to reference.
-     */
-    _Must_inspect_result_ bool
-    ebpf_extension_reference_provider_data(_Inout_ ebpf_extension_client_t* client_context);
-
-    /**
-     * @brief Allow extension provider to unload.
-     *
-     * @param[in,out] client_context Client context to dereference.
-     */
-    void
-    ebpf_extension_dereference_provider_data(_Inout_ ebpf_extension_client_t* client_context);
-
-    /**
-     * @brief Register as an extension provider.
-     *
-     * @param[out] provider_context Context used to unload the provider.
-     * @param[in] interface_id GUID representing the identity of the interface.
-     * @param[in] provider_module_id GUID representing the identity of the provider.
-     * @param[in, out] provider_binding_context Provider binding context.
-     * @param[in] provider_data Opaque provider data.
-     * @param[in] provider_dispatch_table Table of function pointers the
-     *  provider exposes.
-     * @param[in, out] callback_context Opaque per-instance pointer passed to the callback functions.
-     * @param[in] attach_client_callback Function invoked when a client attaches.
-     * @param[in] detach_client_callback Function invoked when a client detaches.
-     * @param[in] provider_cleanup_binding_context_callback Function invoked when a binding context can be cleaned up.
-     * @retval EBPF_SUCCESS The operation was successful.
-     * @retval EBPF_ERROR_EXTENSION_FAILED_TO_LOAD The provider was unable to
-     *  load.
-     * @retval EBPF_NO_MEMORY Unable to allocate resources for this
-     *  operation.
-     */
-    _Must_inspect_result_ ebpf_result_t
-    ebpf_provider_load(
-        _Outptr_ ebpf_extension_provider_t** provider_context,
-        _In_ const GUID* interface_id,
-        _In_ const GUID* provider_module_id,
-        _Inout_opt_ void* provider_binding_context,
-        _In_opt_ const ebpf_extension_data_t* provider_data,
-        _In_opt_ const ebpf_extension_dispatch_table_t* provider_dispatch_table,
-        _Inout_opt_ void* callback_context,
-        _In_ NPI_PROVIDER_ATTACH_CLIENT_FN attach_client_callback,
-        _In_ NPI_PROVIDER_DETACH_CLIENT_FN detach_client_callback,
-        _In_opt_ PNPI_PROVIDER_CLEANUP_BINDING_CONTEXT_FN provider_cleanup_binding_context_callback);
-
-    /**
-     * @brief Unload a provider.
-     *
-     * @param[in] provider_context Provider to unload.
-     */
-    void
-    ebpf_provider_unload(_Frees_ptr_opt_ ebpf_extension_provider_t* provider_context);
 
     _Must_inspect_result_ ebpf_result_t
     ebpf_guid_create(_Out_ GUID* new_guid);
@@ -1184,14 +1078,16 @@ extern "C"
     /**
      * @brief Create a cryptographic hash object.
      *
-     * @param[in] algorithm The algorithm to use. Recommended values are "SHA256".
+     * @param[in] algorithm The algorithm to use. Recommended value is "SHA256".
+     *  The CNG algorithm name to use is listed in
+     *  https://learn.microsoft.com/en-us/windows/win32/seccng/cng-algorithm-identifiers
      * @param[out] hash The hash object.
      * @return EBPF_SUCCESS The hash object was created.
      * @return EBPF_NO_MEMORY Unable to allocate memory for the hash object.
      * @return EBPF_INVALID_ARGUMENT The algorithm is not supported.
      */
     _Must_inspect_result_ ebpf_result_t
-    ebpf_cryptographic_hash_create(_In_z_ const wchar_t* algorithm, _Outptr_ ebpf_cryptographic_hash_t** hash);
+    ebpf_cryptographic_hash_create(_In_ const ebpf_utf8_string_t* algorithm, _Outptr_ ebpf_cryptographic_hash_t** hash);
 
     /**
      * @brief Destroy a cryptographic hash object.
@@ -1231,6 +1127,9 @@ extern "C"
         _Out_writes_to_(input_length, *output_length) uint8_t* buffer,
         size_t input_length,
         _Out_ size_t* output_length);
+
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_cryptographic_hash_get_hash_length(_In_ const ebpf_cryptographic_hash_t* hash, _Out_ size_t* length);
 
     /**
      * @brief Should the current thread yield the processor?
@@ -1313,6 +1212,31 @@ extern "C"
     void
     ebpf_semaphore_release(_In_ ebpf_semaphore_t* semaphore);
 
+    /**
+     * @brief Enter a critical region. This will defer execution of kernel APCs
+     * until ebpf_leave_critical_region is called.
+     */
+    void
+    ebpf_enter_critical_region();
+
+    /**
+     * @brief Leave a critical region. This will resume execution of kernel APCs.
+     */
+    void
+    ebpf_leave_critical_region();
+
+    /**
+     * @brief Convert the provided UTF-8 string into a UTF-16LE string.
+     *
+     * @param[in] input UTF-8 string to convert.
+     * @param[out] output Converted UTF-16LE string.
+     * @retval EBPF_SUCCESS The conversion was successful.
+     * @retval EBPF_NO_MEMORY Unable to allocate resources for the conversion.
+     * @retval EBPF_INVALID_ARGUMENT Unable to convert the string.
+     */
+    ebpf_result_t
+    ebpf_utf8_string_to_unicode(_In_ const ebpf_utf8_string_t* input, _Outptr_ wchar_t** output);
+
 #define EBPF_TRACELOG_EVENT_SUCCESS "EbpfSuccess"
 #define EBPF_TRACELOG_EVENT_RETURN "EbpfReturn"
 #define EBPF_TRACELOG_EVENT_GENERIC_ERROR "EbpfGenericError"
@@ -1372,6 +1296,17 @@ extern "C"
         TraceLoggingKeyword(EBPF_TRACELOG_KEYWORD_FUNCTION_ENTRY_EXIT), \
         TraceLoggingOpcode(WINEVENT_OPCODE_STOP),                       \
         TraceLoggingString(__FUNCTION__, "==>"));
+
+#define EBPF_RETURN_ERROR(error)                   \
+    do {                                           \
+        uint32_t local_result = (error);           \
+        if (local_result == ERROR_SUCCESS) {       \
+            EBPF_LOG_FUNCTION_SUCCESS();           \
+        } else {                                   \
+            EBPF_LOG_FUNCTION_ERROR(local_result); \
+        }                                          \
+        return local_result;                       \
+    } while (false);
 
 #define EBPF_RETURN_RESULT(status)                 \
     do {                                           \
@@ -1456,6 +1391,15 @@ extern "C"
         TraceLoggingKeyword((keyword)),                                  \
         TraceLoggingString(message, "Message"),                          \
         TraceLoggingNTStatus(status));
+
+#define EBPF_LOG_MESSAGE_ERROR(trace_level, keyword, message, error) \
+    TraceLoggingWrite(                                               \
+        ebpf_tracelog_provider,                                      \
+        EBPF_TRACELOG_EVENT_GENERIC_MESSAGE,                         \
+        TraceLoggingLevel(trace_level),                              \
+        TraceLoggingKeyword((keyword)),                              \
+        TraceLoggingString(message, "Message"),                      \
+        TraceLoggingWinError(error));
 
 #define EBPF_LOG_MESSAGE_UTF8_STRING(trace_level, keyword, message, string) \
     TraceLoggingWrite(                                                      \

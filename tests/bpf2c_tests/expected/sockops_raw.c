@@ -372,7 +372,7 @@ label_8:
     r2 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(13));
     // EBPF_OP_LSH64_IMM pc=81 dst=r2 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r2 <<= IMMEDIATE(8);
+    r2 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=82 dst=r1 src=r0 offset=12 imm=0
 #line 48 "sample/sockops.c"
     r1 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(12));
@@ -384,7 +384,7 @@ label_8:
     r8 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(15));
     // EBPF_OP_LSH64_IMM pc=85 dst=r8 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r8 <<= IMMEDIATE(8);
+    r8 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=86 dst=r5 src=r0 offset=14 imm=0
 #line 48 "sample/sockops.c"
     r5 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(14));
@@ -396,7 +396,7 @@ label_8:
     r6 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(9));
     // EBPF_OP_LSH64_IMM pc=89 dst=r6 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r6 <<= IMMEDIATE(8);
+    r6 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=90 dst=r1 src=r0 offset=8 imm=0
 #line 48 "sample/sockops.c"
     r1 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(8));
@@ -408,7 +408,7 @@ label_8:
     r9 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(11));
     // EBPF_OP_LSH64_IMM pc=93 dst=r9 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r9 <<= IMMEDIATE(8);
+    r9 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=94 dst=r5 src=r0 offset=10 imm=0
 #line 48 "sample/sockops.c"
     r5 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(10));
@@ -456,16 +456,16 @@ label_9:
     r6 |= r1;
     // EBPF_OP_LSH64_IMM pc=108 dst=r9 src=r0 offset=0 imm=16
 #line 49 "sample/sockops.c"
-    r9 <<= IMMEDIATE(16);
+    r9 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_LSH64_IMM pc=109 dst=r8 src=r0 offset=0 imm=16
 #line 49 "sample/sockops.c"
-    r8 <<= IMMEDIATE(16);
+    r8 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_LSH64_IMM pc=110 dst=r5 src=r0 offset=0 imm=8
 #line 49 "sample/sockops.c"
-    r5 <<= IMMEDIATE(8);
+    r5 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LSH64_IMM pc=111 dst=r7 src=r0 offset=0 imm=8
 #line 49 "sample/sockops.c"
-    r7 <<= IMMEDIATE(8);
+    r7 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_MOV64_IMM pc=112 dst=r1 src=r0 offset=0 imm=44
 #line 49 "sample/sockops.c"
     r1 = IMMEDIATE(44);
@@ -531,7 +531,7 @@ label_11:
     *(uint64_t*)(uintptr_t)(r10 + OFFSET(-72)) = (uint64_t)r2;
     // EBPF_OP_LSH64_IMM pc=131 dst=r8 src=r0 offset=0 imm=32
 #line 48 "sample/sockops.c"
-    r8 <<= IMMEDIATE(32);
+    r8 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_OR64_REG pc=132 dst=r8 src=r9 offset=0 imm=0
 #line 48 "sample/sockops.c"
     r8 |= r9;
@@ -540,7 +540,7 @@ label_11:
     *(uint64_t*)(uintptr_t)(r10 + OFFSET(-56)) = (uint64_t)r8;
     // EBPF_OP_LSH64_IMM pc=134 dst=r7 src=r0 offset=0 imm=16
 #line 48 "sample/sockops.c"
-    r7 <<= IMMEDIATE(16);
+    r7 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=135 dst=r7 src=r5 offset=0 imm=0
 #line 48 "sample/sockops.c"
     r7 |= r5;
@@ -549,7 +549,7 @@ label_11:
     r1 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(5));
     // EBPF_OP_LSH64_IMM pc=137 dst=r1 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r1 <<= IMMEDIATE(8);
+    r1 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=138 dst=r2 src=r0 offset=4 imm=0
 #line 48 "sample/sockops.c"
     r2 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(4));
@@ -564,19 +564,19 @@ label_11:
     r4 = *(uint8_t*)(uintptr_t)(r0 + OFFSET(7));
     // EBPF_OP_LSH64_IMM pc=142 dst=r4 src=r0 offset=0 imm=8
 #line 48 "sample/sockops.c"
-    r4 <<= IMMEDIATE(8);
+    r4 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_OR64_REG pc=143 dst=r4 src=r2 offset=0 imm=0
 #line 48 "sample/sockops.c"
     r4 |= r2;
     // EBPF_OP_LSH64_IMM pc=144 dst=r4 src=r0 offset=0 imm=16
 #line 48 "sample/sockops.c"
-    r4 <<= IMMEDIATE(16);
+    r4 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=145 dst=r4 src=r1 offset=0 imm=0
 #line 48 "sample/sockops.c"
     r4 |= r1;
     // EBPF_OP_LSH64_IMM pc=146 dst=r4 src=r0 offset=0 imm=32
 #line 48 "sample/sockops.c"
-    r4 <<= IMMEDIATE(32);
+    r4 <<= (IMMEDIATE(32) & 63);
     // EBPF_OP_OR64_REG pc=147 dst=r4 src=r7 offset=0 imm=0
 #line 48 "sample/sockops.c"
     r4 |= r7;
@@ -606,7 +606,7 @@ label_11:
     r4 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(13));
     // EBPF_OP_LSH64_IMM pc=156 dst=r4 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r4 <<= IMMEDIATE(8);
+    r4 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=157 dst=r1 src=r3 offset=12 imm=0
 #line 51 "sample/sockops.c"
     r1 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(12));
@@ -618,7 +618,7 @@ label_11:
     r2 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(15));
     // EBPF_OP_LSH64_IMM pc=160 dst=r2 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r2 <<= IMMEDIATE(8);
+    r2 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=161 dst=r1 src=r3 offset=14 imm=0
 #line 51 "sample/sockops.c"
     r1 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(14));
@@ -630,7 +630,7 @@ label_11:
     r5 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(1));
     // EBPF_OP_LSH64_IMM pc=164 dst=r5 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r5 <<= IMMEDIATE(8);
+    r5 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=165 dst=r1 src=r3 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r1 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(0));
@@ -642,7 +642,7 @@ label_11:
     r1 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(3));
     // EBPF_OP_LSH64_IMM pc=168 dst=r1 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r1 <<= IMMEDIATE(8);
+    r1 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=169 dst=r0 src=r3 offset=2 imm=0
 #line 51 "sample/sockops.c"
     r0 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(2));
@@ -651,13 +651,13 @@ label_11:
     r1 |= r0;
     // EBPF_OP_LSH64_IMM pc=171 dst=r1 src=r0 offset=0 imm=16
 #line 51 "sample/sockops.c"
-    r1 <<= IMMEDIATE(16);
+    r1 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=172 dst=r1 src=r5 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r1 |= r5;
     // EBPF_OP_LSH64_IMM pc=173 dst=r2 src=r0 offset=0 imm=16
 #line 51 "sample/sockops.c"
-    r2 <<= IMMEDIATE(16);
+    r2 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=174 dst=r2 src=r4 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r2 |= r4;
@@ -666,7 +666,7 @@ label_11:
     r4 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(9));
     // EBPF_OP_LSH64_IMM pc=176 dst=r4 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r4 <<= IMMEDIATE(8);
+    r4 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=177 dst=r5 src=r3 offset=8 imm=0
 #line 51 "sample/sockops.c"
     r5 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(8));
@@ -678,7 +678,7 @@ label_11:
     r5 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(11));
     // EBPF_OP_LSH64_IMM pc=180 dst=r5 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r5 <<= IMMEDIATE(8);
+    r5 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=181 dst=r0 src=r3 offset=10 imm=0
 #line 51 "sample/sockops.c"
     r0 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(10));
@@ -687,7 +687,7 @@ label_11:
     r5 |= r0;
     // EBPF_OP_LSH64_IMM pc=183 dst=r5 src=r0 offset=0 imm=16
 #line 51 "sample/sockops.c"
-    r5 <<= IMMEDIATE(16);
+    r5 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=184 dst=r5 src=r4 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r5 |= r4;
@@ -705,7 +705,7 @@ label_11:
     r1 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(5));
     // EBPF_OP_LSH64_IMM pc=189 dst=r1 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r1 <<= IMMEDIATE(8);
+    r1 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_LDXB pc=190 dst=r2 src=r3 offset=4 imm=0
 #line 51 "sample/sockops.c"
     r2 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(4));
@@ -720,13 +720,13 @@ label_11:
     r3 = *(uint8_t*)(uintptr_t)(r3 + OFFSET(7));
     // EBPF_OP_LSH64_IMM pc=194 dst=r3 src=r0 offset=0 imm=8
 #line 51 "sample/sockops.c"
-    r3 <<= IMMEDIATE(8);
+    r3 <<= (IMMEDIATE(8) & 63);
     // EBPF_OP_OR64_REG pc=195 dst=r3 src=r2 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r3 |= r2;
     // EBPF_OP_LSH64_IMM pc=196 dst=r3 src=r0 offset=0 imm=16
 #line 51 "sample/sockops.c"
-    r3 <<= IMMEDIATE(16);
+    r3 <<= (IMMEDIATE(16) & 63);
     // EBPF_OP_OR64_REG pc=197 dst=r3 src=r1 offset=0 imm=0
 #line 51 "sample/sockops.c"
     r3 |= r1;
@@ -862,7 +862,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

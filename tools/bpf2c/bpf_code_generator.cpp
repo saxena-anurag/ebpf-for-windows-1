@@ -77,7 +77,7 @@ enum class AluOperations
     Mod,
     Xor,
     Mov,
-    Ashr,
+    Arsh,
     ByteOrder,
 };
 
@@ -282,7 +282,8 @@ bpf_code_generator::parse(
     const bpf_code_generator::unsafe_string& section_name,
     const GUID& program_type,
     const GUID& attach_type,
-    const std::optional<std::vector<uint8_t>>& program_info_hash)
+    const std::optional<std::vector<uint8_t>>& program_info_hash,
+    const std::string& program_info_hash_type)
 {
     current_section = &sections[section_name];
     get_register_name(0);
@@ -290,18 +291,22 @@ bpf_code_generator::parse(
     get_register_name(10);
 
     set_pe_section_name(section_name);
-    set_program_and_attach_type_and_hash(program_type, attach_type, program_info_hash);
+    set_program_and_attach_type_and_hash(program_type, attach_type, program_info_hash, program_info_hash_type);
     extract_program(section_name);
     extract_relocations_and_maps(section_name);
 }
 
 void
 bpf_code_generator::set_program_and_attach_type_and_hash(
-    const GUID& program_type, const GUID& attach_type, const std::optional<std::vector<uint8_t>>& program_info_hash)
+    const GUID& program_type,
+    const GUID& attach_type,
+    const std::optional<std::vector<uint8_t>>& program_info_hash,
+    const std::string& program_info_hash_type)
 {
     memcpy(&current_section->program_type, &program_type, sizeof(GUID));
     memcpy(&current_section->expected_attach_type, &attach_type, sizeof(GUID));
     current_section->program_info_hash = program_info_hash;
+    current_section->program_info_hash_type = program_info_hash_type;
 }
 
 void
@@ -595,13 +600,42 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
                 output.lines.push_back(std::format("{} &= {};", destination, source));
                 break;
             case AluOperations::Lsh:
-                output.lines.push_back(std::format("{} <<= {};", destination, source));
+                if (is64bit) {
+
+                    // Shifts of >= 64 bits on 64-bit values result in undefined behavior so mask off the msb of the
+                    // shift size, i.e., the 'source' in this case.
+                    // Note: The 'duplication' of the following two lines for the 32-bit variant is deliberate as this
+                    // allows the use of the (applicable) native size for the shift_mask variable, thus doing away with
+                    // 'casting' that would otherwise be required. This also makes the code more readable.
+                    uint64_t shift_mask = 0x3F;
+                    output.lines.push_back(std::format("{} <<= ({} & {});", destination, source, shift_mask));
+                } else {
+
+                    // Shifts of >= 32 bits on 32-bit values result in undefined behavior so mask off the msb of the
+                    // shift size, i.e., the 'source' in this case.
+                    uint32_t shift_mask = 0x1F;
+                    output.lines.push_back(std::format("{} <<= ({} & {});", destination, source, shift_mask));
+                }
                 break;
             case AluOperations::Rsh:
                 if (is64bit) {
-                    output.lines.push_back(std::format("{} >>= {};", destination, source));
+
+                    // Shifts of >= 64 bits on 64-bit values result in undefined behavior so mask off the msb of the
+                    // shift size, i.e., the 'source' in this case.
+                    // Note: The 'duplication' of the following two lines for the 32-bit variant is deliberate as this
+                    // allows the use of the (applicable) native size for the shift_mask variable, thus doing away with
+                    // 'casting' that would otherwise be required. This also makes the code more readable.
+                    uint64_t shift_mask = 0x3F;
+                    output.lines.push_back(std::format("{} >>= ({} & {});", destination, source, shift_mask));
                 } else {
-                    output.lines.push_back(std::format("{} = (uint32_t){} >> {};", destination, destination, source));
+
+                    // Shifts of >= 32 bits on 32-bit values result in undefined behavior so mask off the msb of the
+                    // shift size, i.e., the 'source' in this case.
+                    // The one 'uint32_t' cast here is required to truncate the destination register's initial value to
+                    // 32 bits prior to using it, given that this is a 32-bit rsh operation.
+                    uint32_t shift_mask = 0x1F;
+                    output.lines.push_back(std::format("{} = (uint32_t){};", destination, destination));
+                    output.lines.push_back(std::format("{} >>= ({} & {});", destination, source, shift_mask));
                 }
                 break;
             case AluOperations::Neg:
@@ -627,12 +661,16 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
             case AluOperations::Mov:
                 output.lines.push_back(std::format("{} = {};", destination, source));
                 break;
-            case AluOperations::Ashr:
+            case AluOperations::Arsh:
                 if (is64bit) {
-                    output.lines.push_back(
-                        std::format("{} = (int64_t){} >> (uint32_t){};", destination, destination, source));
+                    uint64_t shift_mask = 0x3F;
+                    output.lines.push_back(std::format(
+                        "{} = (int64_t){} >> (uint32_t)({} & {});", destination, destination, source, shift_mask));
                 } else {
-                    output.lines.push_back(std::format("{} = (int32_t){} >> {};", destination, destination, source));
+                    uint32_t shift_mask = 0x1F;
+                    output.lines.push_back(std::format("{} = (int32_t){};", destination, destination));
+                    output.lines.push_back(std::format(
+                        "{} = (int32_t){} >> (uint32_t)({} & {});", destination, destination, source, shift_mask));
                 }
                 break;
             case AluOperations::ByteOrder: {
@@ -1215,6 +1253,15 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             if (program.program_info_hash.has_value()) {
                 output_stream << INDENT INDENT << program_info_hash_name << "," << std::endl;
                 output_stream << INDENT INDENT << program.program_info_hash.value().size() << "," << std::endl;
+                // Append the hash type
+                std::string hash_string = program.program_info_hash_type;
+                if (hash_string.empty()) {
+                    // If the hash type is not known, use the default hash type.
+                    hash_string = EBPF_HASH_ALGORITHM;
+                    program.program_info_hash_type = hash_string;
+                }
+                output_stream << INDENT INDENT << "\"" << hash_string << "\""
+                              << "," << std::endl;
             }
             output_stream << INDENT "}," << std::endl;
         }
@@ -1235,13 +1282,9 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
     output_stream << "}" << std::endl;
     output_stream << std::endl;
 
-    std::istringstream version_stream(EBPF_VERSION);
-    std::string version_major;
-    std::string version_minor;
-    std::string version_revision;
-    std::getline(version_stream, version_major, '.');
-    std::getline(version_stream, version_minor, '.');
-    std::getline(version_stream, version_revision, '.');
+    std::string version_major = std::to_string(EBPF_VERSION_MAJOR);
+    std::string version_minor = std::to_string(EBPF_VERSION_MINOR);
+    std::string version_revision = std::to_string(EBPF_VERSION_REVISION);
 
     output_stream << "static void" << std::endl
                   << "_get_version(_Out_ bpf2c_version_t* version)" << std::endl

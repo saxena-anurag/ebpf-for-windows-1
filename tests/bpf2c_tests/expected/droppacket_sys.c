@@ -347,7 +347,7 @@ label_1:
     r3 = *(uint8_t*)(uintptr_t)(r1 + OFFSET(0));
     // EBPF_OP_LSH64_IMM pc=26 dst=r3 src=r0 offset=0 imm=2
 #line 66 "sample/droppacket.c"
-    r3 <<= IMMEDIATE(2);
+    r3 <<= (IMMEDIATE(2) & 63);
     // EBPF_OP_AND64_IMM pc=27 dst=r3 src=r0 offset=0 imm=60
 #line 66 "sample/droppacket.c"
     r3 &= IMMEDIATE(60);
@@ -455,7 +455,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 0;
-    version->minor = 7;
+    version->minor = 9;
     version->revision = 0;
 }
 

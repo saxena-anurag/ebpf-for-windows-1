@@ -48,6 +48,7 @@ jobs:
       build_msi: true
       build_nuget: true
       build_options: /p:ReleaseJIT='True'
+      configurations: '["Debug", "FuzzerDebug", "Release"]'
 
   # Perform the native-only build.
   regular_native-only:
@@ -56,6 +57,8 @@ jobs:
     uses: ./.github/workflows/reusable-build.yml
     with:
       build_artifact: Build-x64-native-only
+      build_msi: true
+      build_nuget: true
       build_options: /p:DisableJIT='True' /p:DisableInterpreter='True'
 
   cmake:
@@ -64,17 +67,6 @@ jobs:
     uses: ./.github/workflows/reusable-cmake-build.yml
     with:
       build_artifact: Build-x64-cmake
-
-  # Perform the libfuzzer build.
-  libfuzzer:
-    # Always run this job.
-    if: github.event_name == 'schedule' || github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
-    uses: ./.github/workflows/reusable-build.yml
-    with:
-      build_artifact: Build-x64-fuzzer
-      cxx_flags: /fsanitize-coverage=inline-bool-flag /fsanitize-coverage=edge /fsanitize-coverage=trace-cmp /fsanitize-coverage=trace-div /ZH:SHA_256
-      ld_flags: '"clang_rt.fuzzer_MD-x86_64.lib" "libsancov.lib"'
-      build_options: /p:Fuzzer='True' /t:tests\libfuzzer\execution_context_fuzzer /t:tests\libfuzzer\bpf2c_fuzzer /t:tests\libfuzzer\verifier_fuzzer /t:tests\libfuzzer\core_helper_fuzzer /t:tests\libfuzzer\netebpfext_fuzzer
 
   # Run the unit tests in GitHub.
   unit_tests:
@@ -85,7 +77,8 @@ jobs:
     with:
       name: unit_tests
       pre_test: appverif -enable Exceptions Handles Heaps Leak Locks Memory SRWLock Threadpool TLS DangerousAPIs DirtyStacks TimeRollOver -for unit_tests.exe
-      test_command: .\unit_tests.exe -d yes
+      # Exclude [processes] test that CodeCoverage can't work with.
+      test_command: .\unit_tests.exe -d yes ~[processes]
       build_artifact: Build-x64
       environment: windows-2022
       code_coverage: true
@@ -133,7 +126,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
-      pre_test: Invoke-WebRequest https://github.com/Alan-Jowett/bpf_conformance/releases/download/v0.0.3/bpf_conformance_runner.exe -OutFile bpf_conformance_runner.exe
+      pre_test: Invoke-WebRequest https://github.com/Alan-Jowett/bpf_conformance/releases/download/v0.0.4/bpf_conformance_runner.exe -OutFile bpf_conformance_runner.exe
       test_command: .\bpf_conformance_runner.exe --test_file_directory %SOURCE_ROOT%\external\ebpf-verifier\external\bpf_conformance\tests --exclude_regex lock* --plugin_path bpf2c_plugin.exe --debug true --plugin_options "--include %SOURCE_ROOT%\include"
       name: bpf2c_conformance
       build_artifact: Build-x64
@@ -156,6 +149,25 @@ jobs:
       post_test: .\cleanup_ebpf_cicd_tests.ps1
       name: driver
       build_artifact: Build-x64
+      environment: ebpf_cicd_tests
+      # driver test copies dumps to testlog folder.
+      gather_dumps: false
+      # driver tests manually gather code coverage
+      code_coverage: false
+
+  # Run the native-only driver tests on self-hosted runners.
+  driver_native_only:
+    # Always run this job.
+    # Only run this on repos that have self-host runners.
+    needs: regular_native-only
+    if: github.repository == 'microsoft/ebpf-for-windows'
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      pre_test: .\setup_ebpf_cicd_tests.ps1
+      test_command: .\execute_ebpf_cicd_tests.ps1
+      post_test: .\cleanup_ebpf_cicd_tests.ps1
+      name: driver
+      build_artifact: Build-x64-native-only
       environment: ebpf_cicd_tests
       # driver test copies dumps to testlog folder.
       gather_dumps: false
@@ -192,94 +204,101 @@ jobs:
       build_options: /p:AddressSanitizer='True'
 
   bpf2c_fuzzer:
-    needs: libfuzzer
+    needs: regular
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: bpf2c_fuzzer
       test_command: .\bpf2c_fuzzer.exe bpf2c_fuzzer_corpus -use_value_profile=1 -max_total_time=300 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   bpf2c_fuzzer_scheduled:
-    needs: libfuzzer
+    needs: regular
     if: github.event_name == 'schedule'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: bpf2c_fuzzer
       test_command: .\bpf2c_fuzzer.exe bpf2c_fuzzer_corpus -use_value_profile=1 -max_total_time=900 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   execution_context_fuzzer:
-    needs: libfuzzer
+    needs: regular
     # Always run this job.
     if: github.event_name == 'schedule' || github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: execution_context_fuzzer
       test_command: .\execution_context_fuzzer.exe execution_context_fuzzer_corpus -use_value_profile=1 -runs=3000 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   # Run the verifier fuzzer.
   verifier_fuzzer:
-    needs: libfuzzer
+    needs: regular
     # Always run this job.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: verifier_fuzzer
       test_command: .\verifier_fuzzer.exe verifier_corpus -use_value_profile=1 -max_total_time=300 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   verifier_fuzzer_scheduled:
-    needs: libfuzzer
+    needs: regular
     # Always run this job.
     if: github.event_name == 'schedule'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: verifier_fuzzer
       test_command: .\verifier_fuzzer.exe verifier_corpus -use_value_profile=1 -max_total_time=900 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   core_helper_fuzzer:
-    needs: libfuzzer
+    needs: regular
     # Always run this job.
     if: github.event_name == 'schedule' || github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: core_helper_fuzzer
       test_command: .\core_helper_fuzzer core_helper_corpus -max_len=139 -runs=1000 -use_value_profile=1 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   netebpfext_fuzzer:
-    needs: libfuzzer
+    needs: regular
     # Always run this job.
     if: github.event_name == 'schedule' || github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: netebpfext_fuzzer
       test_command: .\netebpfext_fuzzer netebpfext_corpus -max_len=12 -runs=1000 -use_value_profile=1 -artifact_prefix=Artifacts\
-      build_artifact: Build-x64-fuzzer
+      build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
       gather_dumps: true
+      configurations: '["FuzzerDebug"]'
 
   # Run Cilium regression tests in GitHub.
   cilium_tests:
@@ -402,7 +421,41 @@ jobs:
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: user_mode_multi_threaded_stress
-      test_command: .\ebpf_stress_tests_um -jtt=32 -jtd=300
+      test_command: .\ebpf_stress_tests_um -tt=32 -td=10
+      build_artifact: Build-x64
+      environment: windows-2022
+      code_coverage: false
+      leak_detection: false
+      gather_dumps: true
+      capture_etw: true
+
+  # Run multi-threaded stress tests against the kernel mode eBPF sub-system.
+  # The '-td' parameter specifies the run time per test, so the total run-time will be a multiple of the total number
+  # of tests, as each test is run sequentially.
+  kernel_mode_multi_threaded_stress_test:
+    needs: regular
+    if: github.event_name == 'schedule'
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      name: kernel_mode_multi_threaded_stress
+      test_command: .\ebpf_stress_tests_km -tt=32 -td=10
+      build_artifact: Build-x64
+      environment: windows-2022
+      code_coverage: false
+      leak_detection: false
+      gather_dumps: true
+      capture_etw: true
+
+  # Run multi-threaded stress tests against the kernel mode eBPF sub-system with extension restart enabled.
+  # The '-td' parameter specifies the run time per test, so the total run-time will be a multiple of the total number
+  # of tests, as each test is run sequentially.
+  kernel_mode_multi_threaded_stress_extension_restart_test:
+    needs: regular
+    if: github.event_name == 'schedule'
+    uses: ./.github/workflows/reusable-test.yml
+    with:
+      name: kernel_mode_multi_threaded_stress_extension_restart
+      test_command: .\ebpf_stress_tests_km -tt=32 -td=10 -er=true -erd=250
       build_artifact: Build-x64
       environment: windows-2022
       code_coverage: false
