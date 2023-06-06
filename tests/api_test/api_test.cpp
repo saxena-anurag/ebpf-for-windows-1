@@ -62,6 +62,21 @@ static service_install_helper
 static service_install_helper
     _ebpf_service_helper(EBPF_SERVICE_NAME, EBPF_SERVICE_BINARY_NAME, SERVICE_WIN32_OWN_PROCESS);
 
+typedef class _ebpf_test_exit_state_checker
+{
+  public:
+    _ebpf_test_exit_state_checker() {}
+    ~_ebpf_test_exit_state_checker()
+    {
+        REQUIRE(bpf_map_get_next_id(0, &_next_id) == -ENOENT);
+        REQUIRE(bpf_prog_get_next_id(0, &_next_id) == -ENOENT);
+        REQUIRE(bpf_link_get_next_id(0, &_next_id) == -ENOENT);
+    }
+
+  private:
+    uint32_t _next_id;
+} ebpf_test_exit_state_checker_t;
+
 static int
 _program_load_helper(
     const char* file_name,
@@ -979,6 +994,7 @@ test_sock_addr_native_program_load_attach(const char* file_name)
 #define DECLARE_REGRESSION_TEST_CASE(version)                                                         \
     TEST_CASE("test_native_program_load_attach-regression-" #version)                                 \
     {                                                                                                 \
+        ebpf_test_exit_state_checker_t checker;                                                       \
         test_sock_addr_native_program_load_attach((const char*)"cgroup_sock_addr2_"##version ".sys"); \
     }
 
@@ -1009,22 +1025,27 @@ _load_invalid_program(_In_z_ const char* file_name, ebpf_execution_type_t execut
 
 TEST_CASE("load_native_program_invalid1", "[native][negative]")
 {
+    ebpf_test_exit_state_checker_t checker;
     _load_invalid_program("invalid_maps1.sys", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
 TEST_CASE("load_native_program_invalid2", "[native][negative]")
 {
+    ebpf_test_exit_state_checker_t checker;
     _load_invalid_program("invalid_maps2.sys", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
 TEST_CASE("load_native_program_invalid3", "[native][negative]")
 {
+    ebpf_test_exit_state_checker_t checker;
     _load_invalid_program("invalid_helpers.sys", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
 TEST_CASE("load_native_program_invalid4", "[native][negative]")
 {
+    ebpf_test_exit_state_checker_t checker;
     _load_invalid_program("empty.sys", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
 TEST_CASE("load_native_program_invalid5", "[native][negative]")
 {
+    ebpf_test_exit_state_checker_t checker;
     _load_invalid_program("invalid_maps3.sys", EBPF_EXECUTION_NATIVE, -EINVAL);
 }
 
