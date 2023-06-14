@@ -96,6 +96,11 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@1ff57057b5cfdc39105cd07a01d78e9b0ea0c14c
 
+    - name: Print path 2
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: |
+        echo %VCToolsInstallDir%
+
     - name: Setup choco cache folder
       # Set the choco cache to a local folder so that it can be cached.
       if: steps.skip_check.outputs.should_skip != 'true'
