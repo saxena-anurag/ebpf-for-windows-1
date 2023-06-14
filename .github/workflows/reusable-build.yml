@@ -68,6 +68,11 @@ jobs:
         cancel_others: 'false'
         paths_ignore: '["**.md", "**/docs/**"]'
 
+    - name: Print path
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: |
+        echo %VCToolsInstallDir%
+
     - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
       if: steps.skip_check.outputs.should_skip != 'true'
       with:
