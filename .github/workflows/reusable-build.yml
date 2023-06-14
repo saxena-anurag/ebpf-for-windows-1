@@ -71,6 +71,7 @@ jobs:
     - name: Print path
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         echo %VCToolsInstallDir%
 
     - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
