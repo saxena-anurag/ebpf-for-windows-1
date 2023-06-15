@@ -70,6 +70,7 @@ jobs:
 
     - name: Print path
       working-directory: ${{env.GITHUB_WORKSPACE}}
+      shell: cmd
       run: |
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         echo %VCToolsInstallDir%
@@ -99,6 +100,7 @@ jobs:
 
     - name: Print path 2
       working-directory: ${{env.GITHUB_WORKSPACE}}
+      shell: cmd
       run: |
         echo %VCToolsInstallDir%
 
