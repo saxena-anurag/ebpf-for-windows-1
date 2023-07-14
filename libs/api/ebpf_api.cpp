@@ -1752,6 +1752,13 @@ _initialize_ebpf_object_from_native_file(
 
         object.programs.emplace_back(program);
         program = nullptr;
+
+        EBPF_LOG_MESSAGE_STRING_STRING(
+            EBPF_TRACELOG_LEVEL_VERBOSE,
+            EBPF_TRACELOG_KEYWORD_API,
+            "_initialize_ebpf_object_from_native_file: Initialized program from file",
+            file_name,
+            program->program_name);
     }
 
 Exit:
@@ -2031,6 +2038,13 @@ _ebpf_pe_get_map_definitions(
                     }
                 }
                 pe_context->object->maps.emplace_back(map);
+
+                EBPF_LOG_MESSAGE_STRING(
+                    EBPF_TRACELOG_LEVEL_VERBOSE,
+                    EBPF_TRACELOG_KEYWORD_API,
+                    "_ebpf_pe_get_map_definitions: Initializing map",
+                    map->name);
+
                 map = nullptr;
             }
         }
@@ -2490,11 +2504,24 @@ _Requires_lock_not_held_(_ebpf_state_mutex) static ebpf_result_t
             }
         }
 
+        EBPF_LOG_MESSAGE_STRING(
+            EBPF_TRACELOG_LEVEL_VERBOSE,
+            EBPF_TRACELOG_KEYWORD_API,
+            "_ebpf_object_create_maps: Creating map",
+            map->name);
+
         ebpf_handle_t inner_map_handle = (map->inner_map) ? map->inner_map->map_handle : ebpf_handle_invalid;
         result = _create_map(map->name, &map->map_definition, inner_map_handle, &map->map_handle);
         if (result != EBPF_SUCCESS) {
+            EBPF_LOG_MESSAGE_STRING(
+                EBPF_TRACELOG_LEVEL_ERROR,
+                EBPF_TRACELOG_KEYWORD_API,
+                "_ebpf_object_create_maps: Failed to create map",
+                map->name);
             break;
         }
+        EBPF_LOG_MESSAGE_STRING(
+            EBPF_TRACELOG_LEVEL_VERBOSE, EBPF_TRACELOG_KEYWORD_API, "_ebpf_object_create_maps: Created map", map->name);
         map->map_fd = _create_file_descriptor_for_handle(map->map_handle);
 
         // If pin_path is set and the map is not yet pinned, pin it now.

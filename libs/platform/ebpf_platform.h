@@ -1599,6 +1599,16 @@ extern "C"
         TraceLoggingString(message, "Message"),                        \
         TraceLoggingString(string, #string));
 
+#define EBPF_LOG_MESSAGE_STRING_STRING(trace_level, keyword, message, string1, string2) \
+    TraceLoggingWrite(                                                                  \
+        ebpf_tracelog_provider,                                                         \
+        EBPF_TRACELOG_EVENT_GENERIC_MESSAGE,                                            \
+        TraceLoggingLevel(trace_level),                                                 \
+        TraceLoggingKeyword((keyword)),                                                 \
+        TraceLoggingString(message, "Message"),                                         \
+        TraceLoggingString(string1, #string1),                                          \
+        TraceLoggingString(string2, #string2));
+
 #define EBPF_LOG_MESSAGE_WSTRING(trace_level, keyword, message, wstring) \
     TraceLoggingWrite(                                                   \
         ebpf_tracelog_provider,                                          \
