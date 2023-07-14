@@ -47,6 +47,12 @@ bpf_object__find_program_by_name(const struct bpf_object* obj, const char* name)
 {
     struct bpf_program* prog;
 
+    EBPF_LOG_MESSAGE_STRING(
+        EBPF_TRACELOG_LEVEL_VERBOSE,
+        EBPF_TRACELOG_KEYWORD_API,
+        "bpf_object__find_program_by_name: Looking for program",
+        name);
+
     bpf_object__for_each_program(prog, obj)
     {
         if (!strcmp(prog->program_name, name)) {
