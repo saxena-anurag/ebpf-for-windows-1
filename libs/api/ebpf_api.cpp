@@ -1751,7 +1751,6 @@ _initialize_ebpf_object_from_native_file(
         }
 
         object.programs.emplace_back(program);
-        program = nullptr;
 
         EBPF_LOG_MESSAGE_STRING_STRING(
             EBPF_TRACELOG_LEVEL_VERBOSE,
@@ -1759,6 +1758,8 @@ _initialize_ebpf_object_from_native_file(
             "_initialize_ebpf_object_from_native_file: Initialized program from file",
             file_name,
             program->program_name);
+
+        program = nullptr;
     }
 
 Exit:
