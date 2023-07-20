@@ -114,6 +114,13 @@ bpf_object__open_file(const char* path, const struct bpf_object_open_opts* opts)
         nullptr,
         &object,
         &error_message);
+    if (result != EBPF_SUCCESS && error_message != nullptr) {
+        EBPF_LOG_MESSAGE_STRING(
+            EBPF_TRACELOG_LEVEL_ERROR,
+            EBPF_TRACELOG_KEYWORD_API,
+            "bpf_object__open_file: ebpf_object_open failed, message:",
+            error_message);
+    }
     ebpf_free_string(error_message);
     libbpf_result_err(result); // Set errno.
     return object;

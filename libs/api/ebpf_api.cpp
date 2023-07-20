@@ -1713,6 +1713,12 @@ _initialize_ebpf_object_from_native_file(
     ebpf_section_info_t* infos = nullptr;
     ebpf_result_t result = _ebpf_enumerate_native_sections(file_name, &object, pin_root_path, &infos, error_message);
     if (result != EBPF_SUCCESS) {
+        EBPF_LOG_MESSAGE_ERROR(
+            EBPF_TRACELOG_LEVEL_ERROR,
+            EBPF_TRACELOG_KEYWORD_API,
+            "bpf_object__open_file: _ebpf_enumerate_native_sections failed",
+            result);
+
         goto Exit;
     }
 
