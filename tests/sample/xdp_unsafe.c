@@ -22,11 +22,6 @@ data_start(xdp_md_t *ctx)
 	return ptr;
 }
 
-//
-// This eBPF program intercepts inbound UDP packets destined to port REFLECTION_TEST_PORT and "reflects" it back
-// by swapping the MAC and IP addresses. The program will only work for packets where UDP is the next header
-// for IP header. For instance this will not work for AH packets.
-//
 SEC("xdp_test/unsafe")
 int
 unsafe_program(xdp_md_t* ctx)
