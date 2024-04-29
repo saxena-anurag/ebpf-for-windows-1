@@ -10,16 +10,6 @@
 
 #include "ebpf_windows.h"
 
-#if !defined(NO_CRT) && !defined(_NO_CRT_STDIO_INLINE)
-#include <stdbool.h>
-#include <stdint.h>
-#else
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
-#endif
-
 #define MAX_TAIL_CALL_CNT 33
 
 #define BPF_ENUM_TO_STRING(X) #X
@@ -170,6 +160,7 @@ typedef enum
     BPF_FUNC_memcmp = 23,                    ///< \ref bpf_memcmp
     BPF_FUNC_memset = 24,                    ///< \ref bpf_memset
     BPF_FUNC_memmove = 25,                   ///< \ref bpf_memmove
+    BPF_FUNC_get_socket_cookie = 26,         ///< \ref bpf_get_socket_cookie
 } ebpf_helper_id_t;
 
 // Cross-platform BPF program types.
@@ -255,6 +246,7 @@ enum bpf_link_type
     BPF_LINK_TYPE_PLAIN,  ///< No union members are used in bpf_link_info.
     BPF_LINK_TYPE_CGROUP, ///< cgroup struct is present in bpf_link_info.
     BPF_LINK_TYPE_XDP,    ///< xdp struct is present in bpf_link_info.
+    BPF_LINK_TYPE_MAX
 };
 
 static const char* const _ebpf_link_display_names[] = {
