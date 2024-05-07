@@ -878,6 +878,7 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
 {
     std::vector<output_instruction_t>& program_output = current_section->output;
     auto program_name = !current_section->program_name.empty() ? current_section->program_name : section_name;
+    auto helper_address_prefix = program_name.c_identifier() + "_helper_addresses[{}]";
     auto helper_array_prefix = program_name.c_identifier() + "_helpers[{}]";
 
     // Encode instructions
@@ -1124,7 +1125,7 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
                     throw bpf_code_generator_exception(
                         "Map " + output.relocation + " doesn't exist", output.instruction_offset);
                 }
-                source = std::format("_maps[{}].address", std::to_string(map_definition->second.index));
+                source = std::format("_map_addresses[{}]", std::to_string(map_definition->second.index));
                 output.lines.push_back(std::format("{} = POINTER({});", destination, source));
                 current_section->referenced_map_indices.insert(map_definitions[output.relocation].index);
             }
@@ -1303,9 +1304,15 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
                 output.lines.push_back("goto " + target + ";");
             } else if (inst.opcode == INST_OP_CALL) {
                 std::string function_name;
+                std::string function_address;
                 if (output.relocation.empty()) {
                     function_name = std::vformat(
                         helper_array_prefix,
+                        make_format_args(std::to_string(
+                            current_section->helper_functions["helper_id_" + std::to_string(output.instruction.imm)]
+                                .index)));
+                    function_address = std::vformat(
+                        helper_address_prefix,
                         make_format_args(std::to_string(
                             current_section->helper_functions["helper_id_" + std::to_string(output.instruction.imm)]
                                 .index)));
@@ -1315,8 +1322,11 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
                     function_name = std::vformat(
                         helper_array_prefix,
                         make_format_args(std::to_string(current_section->helper_functions[output.relocation].index)));
+                    function_address = std::vformat(
+                        helper_address_prefix,
+                        make_format_args(std::to_string(current_section->helper_functions[output.relocation].index)));
                 }
-                output.lines.push_back(get_register_name(0) + " = " + function_name + ".address");
+                output.lines.push_back(get_register_name(0) + " = " + function_address);
                 output.lines.push_back(
                     INDENT " (" + get_register_name(1) + ", " + get_register_name(2) + ", " + get_register_name(3) +
                     ", " + get_register_name(4) + ", " + get_register_name(5) + ");");
@@ -1347,6 +1357,7 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
 void
 bpf_code_generator::emit_c_code(std::ostream& output_stream)
 {
+    std::stringstream map_addreses_stream;
     // Emit C file
     output_stream << "#include \"bpf2c.h\"" << std::endl << std::endl;
 
@@ -1378,6 +1389,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
     if (map_definitions.size() > 0) {
         output_stream << "#pragma data_seg(push, \"maps\")" << std::endl;
         output_stream << "static map_entry_t _maps[] = {" << std::endl;
+        map_addreses_stream << "static uint64_t _map_addresses[] = {" << std::endl;
         size_t map_size = map_definitions.size();
         // Sort maps by index.
         std::vector<std::tuple<bpf_code_generator::unsafe_string, map_entry_t>> maps_by_index(map_size);
@@ -1417,7 +1429,6 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             output_stream << INDENT
                 "{{NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION, NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION_SIZE},"
                           << std::endl;
-            output_stream << INDENT " NULL," << std::endl;
             output_stream << INDENT " {" << std::endl;
             output_stream << INDENT INDENT " " << std::left << std::setw(stream_width) << map_type + ","
                           << "// Type of map." << std::endl;
@@ -1443,30 +1454,43 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
                           << "// The id of the inner map template." << std::endl;
             output_stream << INDENT " }," << std::endl;
             output_stream << INDENT " " << name.quoted() << "}," << std::endl;
+
+            map_addreses_stream << INDENT " NULL," << std::endl;
         }
         output_stream << "};" << std::endl;
+
+        map_addreses_stream << "};" << std::endl;
+
+        // Merge the 2 streams.
+        output_stream << map_addreses_stream.str();
+
         output_stream << "#pragma data_seg(pop)" << std::endl;
         output_stream << std::endl;
         output_stream << "static void" << std::endl
-                      << "_get_maps(_Outptr_result_buffer_maybenull_(*count) map_entry_t** maps, _Out_ size_t* count)"
+                      << "_get_maps(_Outptr_result_buffer_maybenull_(*count) map_entry_t** maps, "
+                         "_Outptr_result_buffer_maybenull_(*count) uint64_t** maps_addresses, _Out_ size_t* count)"
                       << std::endl;
         output_stream << "{" << std::endl;
         output_stream << INDENT "*maps = _maps;" << std::endl;
+        output_stream << INDENT "*maps_addresses = _map_addresses;" << std::endl;
         output_stream << INDENT "*count = " << std::to_string(map_definitions.size()) << ";" << std::endl;
         output_stream << "}" << std::endl;
         output_stream << std::endl;
     } else {
         output_stream << "static void" << std::endl
-                      << "_get_maps(_Outptr_result_buffer_maybenull_(*count) map_entry_t** maps, _Out_ size_t* count)"
+                      << "_get_maps(_Outptr_result_buffer_maybenull_(*count) map_entry_t** maps, "
+                         "_Outptr_result_buffer_maybenull_(*count) uint64_t** maps_addresses, _Out_ size_t* count)"
                       << std::endl;
         output_stream << "{" << std::endl;
         output_stream << INDENT "*maps = NULL;" << std::endl;
+        output_stream << INDENT "*maps_addresses = NULL;" << std::endl;
         output_stream << INDENT "*count = 0;" << std::endl;
         output_stream << "}" << std::endl;
         output_stream << std::endl;
     }
 
     for (auto& [name, section] : sections) {
+        std::stringstream helper_addresses_stream;
         auto program_name = !section.program_name.empty() ? section.program_name : name;
 
         if (section.output.size() == 0) {
@@ -1476,7 +1500,10 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
         // Emit section specific helper function array.
         if (section.helper_functions.size() > 0) {
             std::string helper_array_name = program_name.c_identifier() + "_helpers";
+            std::string helper_address_array_name = program_name.c_identifier() + "_helper_addresses";
+
             output_stream << "static helper_function_entry_t " << helper_array_name << "[] = {" << std::endl;
+            helper_addresses_stream << "static uint64_t " << helper_address_array_name << "[] = {" << std::endl;
 
             // Functions are emitted in the order in which they occur in the byte code.
             std::vector<std::tuple<bpf_code_generator::unsafe_string, uint32_t>> index_ordered_helpers;
@@ -1489,11 +1516,19 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
                 output_stream << INDENT "{{NATIVE_MODULE_HELPER_ENTRY_CURRENT_VERSION, "
                                         "NATIVE_MODULE_HELPER_ENTRY_CURRENT_VERSION_SIZE}, NULL, "
                               << id << ", " << helper_name.quoted() << "}," << std::endl;
+
+                helper_addresses_stream << INDENT "NULL," << std::endl;
             }
 
             output_stream << "};" << std::endl;
             output_stream << std::endl;
+
+            helper_addresses_stream << "};" << std::endl;
+            helper_addresses_stream << std::endl;
         }
+
+        // Append helper_addresses_stream to output_stream.
+        output_stream << helper_addresses_stream.str();
 
         // Emit the program and attach type GUID.
         std::string program_type_name = program_name.c_identifier() + "_program_type_guid";
@@ -1627,6 +1662,8 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             size_t helper_count = program.helper_functions.size();
             auto map_array_name = map_count ? (program_name.c_identifier() + "_maps") : "NULL";
             auto helper_array_name = helper_count ? (program_name.c_identifier() + "_helpers") : "NULL";
+            auto helper_array_address_name =
+                helper_count ? (program_name.c_identifier() + "_helper_addresses") : "NULL";
             auto program_type_guid_name = program_name.c_identifier() + "_program_type_guid";
             auto attach_type_guid_name = program_name.c_identifier() + "_attach_type_guid";
             auto program_info_hash_name = program_name.c_identifier() + "_program_info_hash";
@@ -1644,8 +1681,9 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             output_stream << INDENT INDENT << program.program_name.quoted() << "," << std::endl;
             output_stream << INDENT INDENT << map_array_name << "," << std::endl;
             output_stream << INDENT INDENT << program.referenced_map_indices.size() << "," << std::endl;
-            output_stream << INDENT INDENT << helper_array_name.c_str() << "," << std::endl;
             output_stream << INDENT INDENT << program.helper_functions.size() << "," << std::endl;
+            output_stream << INDENT INDENT << helper_array_name.c_str() << "," << std::endl;
+            output_stream << INDENT INDENT << helper_array_address_name.c_str() << "," << std::endl;
             output_stream << INDENT INDENT << program.output.size() << "," << std::endl;
             output_stream << INDENT INDENT "&" << program_type_guid_name << "," << std::endl;
             output_stream << INDENT INDENT "&" << attach_type_guid_name << "," << std::endl;

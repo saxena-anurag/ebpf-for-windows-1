@@ -2501,7 +2501,7 @@ _ebpf_pe_get_map_definitions(
             for (int map_index = 0; map_offset + sizeof(map_entry_t) <= section_header.Misc.VirtualSize;
                  map_offset += sizeof(map_entry_t), map_index++) {
                 map_entry_t* entry = (map_entry_t*)(buffer->buf + map_offset);
-                if (entry->address != nullptr) {
+                if (entry->zero != 0) {
                     // bpf2c generates a section that has map names longer than sizeof(map_entry_t)
                     // at the end of the section.  This entry seems to be a map name string, so we've
                     // reached the end of the maps.
@@ -2515,13 +2515,13 @@ _ebpf_pe_get_map_definitions(
 
                 map->map_handle = ebpf_handle_invalid;
                 map->original_fd = (fd_t)map_index;
-                map->map_definition.type = entry->definition.type;
-                map->map_definition.key_size = entry->definition.key_size;
-                map->map_definition.value_size = entry->definition.value_size;
-                map->map_definition.max_entries = entry->definition.max_entries;
-                map->map_definition.pinning = entry->definition.pinning;
-                map->map_definition.inner_map_id = entry->definition.inner_id;
-                map->inner_map_original_fd = map_idx_to_original_fd(entry->definition.inner_map_idx);
+                map->map_definition.type = entry->map_definition->definition.type;
+                map->map_definition.key_size = entry->map_definition->definition.key_size;
+                map->map_definition.value_size = entry->map_definition->definition.value_size;
+                map->map_definition.max_entries = entry->map_definition->definition.max_entries;
+                map->map_definition.pinning = entry->map_definition->definition.pinning;
+                map->map_definition.inner_map_id = entry->map_definition->definition.inner_id;
+                map->inner_map_original_fd = map_idx_to_original_fd(entry->map_definition->definition.inner_map_idx);
                 map->pinned = false;
                 map->reused = false;
                 map->pin_path = nullptr;

@@ -300,6 +300,12 @@ class bpf_code_generator
         size_t index;
     } map_entry_t;
 
+    typedef struct _map_address
+    {
+        void* address;
+        size_t index;
+    } map_address_t;
+
     typedef struct _output_instruction
     {
         ebpf_inst instruction = {};

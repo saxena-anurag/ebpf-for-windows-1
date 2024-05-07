@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation
 // SPDX-License-Identifier: MIT
 
+#include "ebpf_native.h"
 #include "ebpf_program_types.h"
 #include "ebpf_serialize.h"
 #include "ebpf_shared_framework.h"
 #include "ebpf_tracelog.h"
 
-#define ARRAY_ELEM_INDEX(array, index, elem_size) (((uint8_t*)array) + (index * elem_size));
+// Note: The order of objects in "_extension_object_type", "_supported_ebpf_extension_version",
+// and "_ebpf_extension_type_supported_sizes" must be kept in sync.
 
 enum _extension_object_type
 {
@@ -17,11 +19,17 @@ enum _extension_object_type
     EBPF_HELPER_FUNCTION_ADDRESSES,
     EBPF_PROGRAM_DATA,
     EBPF_PROGRAM_SECTION,
+    EBPF_NATIVE_METADATA_TABLE,
+    EBPF_NATIVE_PROGRAM_ENTRY,
+    EBPF_NATIVE_HELPER_INFO,
+    EBPF_NATIVE_HELPER_DATA,
+    EBPF_NATIVE_MAP_ENTRY,
+    EBPF_NATIVE_MAP_DEFINITION,
 };
 
 // Supported version and sizes of the various extension data structures.
 
-uint16_t _supported_ebpf_extension_version[] = {
+static uint16_t _supported_ebpf_extension_version[] = {
     EBPF_ATTACH_PROVIDER_DATA_CURRENT_VERSION,
     EBPF_PROGRAM_TYPE_DESCRIPTOR_CURRENT_VERSION,
     EBPF_HELPER_FUNCTION_PROTOTYPE_CURRENT_VERSION,
@@ -29,6 +37,12 @@ uint16_t _supported_ebpf_extension_version[] = {
     EBPF_HELPER_FUNCTION_ADDRESSES_CURRENT_VERSION,
     EBPF_PROGRAM_DATA_CURRENT_VERSION,
     EBPF_PROGRAM_SECTION_INFORMATION_CURRENT_VERSION,
+    EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION,
+    EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION,
+    EBPF_NATIVE_HELPER_INFO_CURRENT_VERSION,
+    EBPF_NATIVE_HELPER_DATA_CURRENT_VERSION,
+    EBPF_NATIVE_MAP_ENTRY_CURRENT_VERSION,
+    EBPF_NATIVE_MAP_DEFINITION_CURRENT_VERSION,
 };
 
 #define EBPF_ATTACH_PROVIDER_DATA_SIZE_0 \
@@ -56,6 +70,24 @@ size_t _ebpf_program_data_supported_size[] = {EBPF_PROGRAM_DATA_SIZE_0};
 #define EBPF_PROGRAM_SECTION_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(ebpf_program_section_info_t, bpf_attach_type)
 size_t _ebpf_program_section_supported_size[] = {EBPF_PROGRAM_SECTION_SIZE_0};
 
+#define EBPF_NATIVE_METADATA_TABLE_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(metadata_table_t, map_initial_values)
+size_t _ebpf_native_metadata_table_supported_size[] = {EBPF_NATIVE_METADATA_TABLE_SIZE_0};
+
+#define EBPF_NATIVE_PROGRAM_ENTRY_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(program_entry_t, program_info_hash_type)
+size_t _ebpf_native_program_entry_supported_size[] = {EBPF_NATIVE_PROGRAM_ENTRY_SIZE_0};
+
+#define EBPF_NATIVE_HELPER_INFO_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(helper_function_entry_info_t, name)
+size_t _ebpf_native_helper_info_supported_size[] = {EBPF_NATIVE_HELPER_INFO_SIZE_0};
+
+#define EPBF_NATIVE_HELPER_DATA_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(helper_function_entry_data_t, tail_call)
+size_t _ebpf_native_helper_data_supported_size[] = {EPBF_NATIVE_HELPER_DATA_SIZE_0};
+
+#define EBPF_NATIVE_MAP_ENTRY_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(map_entry_t, name)
+size_t _ebpf_native_map_entry_supported_size[] = {EBPF_NATIVE_MAP_ENTRY_SIZE_0};
+
+#define EBPF_NATIVE_MAP_DEFINITION_SIZE_0 EBPF_SIZE_INCLUDING_FIELD(map_definition_entry_t, definition)
+size_t _ebpf_native_map_definition_supported_size[] = {EBPF_NATIVE_MAP_DEFINITION_SIZE_0};
+
 struct _ebpf_extension_data_structure_supported_sizes
 {
     size_t* supported_sizes;
@@ -69,6 +101,10 @@ struct _ebpf_extension_data_structure_supported_sizes _ebpf_extension_type_suppo
     {_ebpf_helper_function_addresses_supported_size, EBPF_COUNT_OF(_ebpf_helper_function_addresses_supported_size)},
     {_ebpf_program_data_supported_size, EBPF_COUNT_OF(_ebpf_program_data_supported_size)},
     {_ebpf_program_section_supported_size, EBPF_COUNT_OF(_ebpf_program_section_supported_size)},
+    {_ebpf_native_metadata_table_supported_size, EBPF_COUNT_OF(_ebpf_native_metadata_table_supported_size)},
+    {_ebpf_native_program_entry_supported_size, EBPF_COUNT_OF(_ebpf_native_program_entry_supported_size)},
+    {_ebpf_native_helper_info_supported_size, EBPF_COUNT_OF(_ebpf_native_helper_info_supported_size)},
+    {_ebpf_native_helper_data_supported_size, EBPF_COUNT_OF(_ebpf_native_helper_data_supported_size)},
 };
 
 static bool
@@ -524,4 +560,122 @@ Exit:
     ebpf_program_data_free(program_data_copy);
 
     EBPF_RETURN_RESULT(result);
+}
+
+bool
+ebpf_validate_metadata_table(_In_opt_ const metadata_table_t* table)
+{
+    if (table == NULL) {
+        return false;
+    }
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_METADATA_TABLE, &table->header) == false) {
+        return false;
+    }
+
+    // Validate that all the required dispatch functions are present.
+    if (table->programs == NULL || table->maps == NULL || table->hash == NULL || table->version == NULL) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool
+_ebpf_validate_program_entry(const program_entry_t* program_entry)
+{
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_PROGRAM_ENTRY, &program_entry->header) == false) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool
+_ebpf_validate_helper_info(const helper_function_entry_info_t* helper_info)
+{
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_HELPER_INFO, &helper_info->header) == false) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool
+_ebpf_validate_helper_data(const helper_function_entry_data_t* helper_data)
+{
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_HELPER_DATA, &helper_data->header) == false) {
+        return false;
+    }
+
+    return true;
+}
+
+bool
+ebpf_validate_program_entry_array(_In_reads_(count) const program_entry_t* programs, size_t count)
+{
+    if (count > 0) {
+        size_t program_entry_size = EBPF_PAD_8(programs[0].header.size);
+
+        for (uint32_t i = 0; i < count; i++) {
+            program_entry_t* program_entry = (program_entry_t*)ARRAY_ELEM_INDEX(programs, i, program_entry_size);
+            if (!_ebpf_validate_program_entry(program_entry)) {
+                return false;
+            }
+
+            // Validate helper_info array
+            if (program_entry->helper_count > 0) {
+                size_t helper_info_size = EBPF_PAD_8(program_entry->helper_info[0].header.size);
+                for (uint32_t j = 0; j < program_entry->helper_count; j++) {
+                    helper_function_entry_info_t* helper_info = (helper_function_entry_info_t*)ARRAY_ELEM_INDEX(
+                        program_entry->helper_info, j, helper_info_size);
+                    if (!_ebpf_validate_helper_info(helper_info)) {
+                        return false;
+                    }
+                }
+            }
+
+            // Validate helper_data array
+            if (program_entry->helper_count > 0) {
+                size_t helper_data_size = EBPF_PAD_8(program_entry->helper_data[0].header.size);
+                for (uint32_t j = 0; j < program_entry->helper_count; j++) {
+                    helper_function_entry_data_t* helper_data = (helper_function_entry_data_t*)ARRAY_ELEM_INDEX(
+                        program_entry->helper_data, j, helper_data_size);
+                    if (!_ebpf_validate_helper_data(helper_data)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static bool
+_ebpf_validate_map_entry(const map_entry_t* entry)
+{
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_MAP_ENTRY, &entry->header) == false) {
+        return false;
+    }
+
+    if (_ebpf_validate_extension_object_header(EBPF_NATIVE_MAP_DEFINITION, &entry->map_definition->header) == false) {
+        return false;
+    }
+
+    return true;
+}
+
+bool
+ebpf_validate_map_entry_array(_In_reads_(count) const map_entry_t* maps, size_t count)
+{
+    if (count > 0) {
+        size_t map_entry_size = EBPF_PAD_8(maps[0].header.size);
+
+        for (uint32_t i = 0; i < count; i++) {
+            map_entry_t* map_entry = (map_entry_t*)ARRAY_ELEM_INDEX(maps, i, map_entry_size);
+            if (!_ebpf_validate_map_entry(map_entry)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
