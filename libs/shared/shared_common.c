@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation
+// Copyright (c) eBPF for Windows contributors
 // SPDX-License-Identifier: MIT
 
 #include "ebpf_native.h"
@@ -679,3 +679,4 @@ ebpf_validate_map_entry_array(_In_reads_(count) const map_entry_t* maps, size_t 
     }
     return true;
 }
+
