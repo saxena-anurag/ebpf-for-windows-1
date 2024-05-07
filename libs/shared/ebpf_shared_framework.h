@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
-#include "bpf2c.h"
+#include "bpf2c_structs.h"
 #include "cxplat.h"
 #include "ebpf_extension.h"
 // #include "ebpf_native.h"
