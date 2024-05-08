@@ -1357,7 +1357,7 @@ bpf_code_generator::encode_instructions(const bpf_code_generator::unsafe_string&
 void
 bpf_code_generator::emit_c_code(std::ostream& output_stream)
 {
-    std::stringstream map_addreses_stream;
+    std::stringstream map_address_stream;
     // Emit C file
     output_stream << "#include \"bpf2c.h\"" << std::endl << std::endl;
 
@@ -1389,7 +1389,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
     if (map_definitions.size() > 0) {
         output_stream << "#pragma data_seg(push, \"maps\")" << std::endl;
         output_stream << "static map_entry_t _maps[] = {" << std::endl;
-        map_addreses_stream << "static uint64_t _map_addresses[] = {" << std::endl;
+        map_address_stream << "static uint64_t _map_addresses[] = {" << std::endl;
         size_t map_size = map_definitions.size();
         // Sort maps by index.
         std::vector<std::tuple<bpf_code_generator::unsafe_string, map_entry_t>> maps_by_index(map_size);
@@ -1427,7 +1427,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             stream_width += 2; // Add space for the trailing ", "
 
             output_stream << INDENT
-                "{{NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION, NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION_SIZE},"
+                "{{EBPF_NATIVE_MAP_ENTRY_CURRENT_VERSION, EBPF_NATIVE_MAP_ENTRY_CURRENT_VERSION_SIZE},"
                           << std::endl;
             output_stream << INDENT " {" << std::endl;
             output_stream << INDENT INDENT " " << std::left << std::setw(stream_width) << map_type + ","
@@ -1455,14 +1455,14 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             output_stream << INDENT " }," << std::endl;
             output_stream << INDENT " " << name.quoted() << "}," << std::endl;
 
-            map_addreses_stream << INDENT " NULL," << std::endl;
+            map_address_stream << INDENT " NULL," << std::endl;
         }
         output_stream << "};" << std::endl;
 
-        map_addreses_stream << "};" << std::endl;
+        map_address_stream << "};" << std::endl;
 
         // Merge the 2 streams.
-        output_stream << map_addreses_stream.str();
+        output_stream << map_address_stream.str();
 
         output_stream << "#pragma data_seg(pop)" << std::endl;
         output_stream << std::endl;
@@ -1490,7 +1490,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
     }
 
     for (auto& [name, section] : sections) {
-        std::stringstream helper_addresses_stream;
+        std::stringstream helper_data_stream;
         auto program_name = !section.program_name.empty() ? section.program_name : name;
 
         if (section.output.size() == 0) {
@@ -1499,11 +1499,12 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
 
         // Emit section specific helper function array.
         if (section.helper_functions.size() > 0) {
-            std::string helper_array_name = program_name.c_identifier() + "_helpers";
-            std::string helper_address_array_name = program_name.c_identifier() + "_helper_addresses";
+            std::string helper_info_array_name = program_name.c_identifier() + "_helper_info";
+            std::string helper_data_array_name = program_name.c_identifier() + "_helper_data";
 
-            output_stream << "static helper_function_entry_t " << helper_array_name << "[] = {" << std::endl;
-            helper_addresses_stream << "static uint64_t " << helper_address_array_name << "[] = {" << std::endl;
+            output_stream << "static helper_function_entry_info_t " << helper_info_array_name << "[] = {" << std::endl;
+            helper_data_stream << "static helper_function_entry_data_t " << helper_data_array_name << "[] = {"
+                               << std::endl;
 
             // Functions are emitted in the order in which they occur in the byte code.
             std::vector<std::tuple<bpf_code_generator::unsafe_string, uint32_t>> index_ordered_helpers;
@@ -1513,22 +1514,26 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             }
 
             for (const auto& [helper_name, id] : index_ordered_helpers) {
-                output_stream << INDENT "{{NATIVE_MODULE_HELPER_ENTRY_CURRENT_VERSION, "
-                                        "NATIVE_MODULE_HELPER_ENTRY_CURRENT_VERSION_SIZE}, NULL, "
+                output_stream << INDENT "{{EBPF_NATIVE_HELPER_INFO_CURRENT_VERSION, "
+                                        "EBPF_NATIVE_HELPER_INFO_CURRENT_VERSION_SIZE}, NULL, "
                               << id << ", " << helper_name.quoted() << "}," << std::endl;
 
-                helper_addresses_stream << INDENT "NULL," << std::endl;
+                helper_data_stream << INDENT "{{EBPF_NATIVE_HELPER_DATA_CURRENT_VERSION, "
+                                             "EBPF_NATIVE_HELPER_DATA_CURRENT_VERSION_SIZE},"
+                                   << std::endl;
+                helper_data_stream << INDENT "NULL, false"
+                                   << "}," << std::endl;
             }
 
             output_stream << "};" << std::endl;
             output_stream << std::endl;
 
-            helper_addresses_stream << "};" << std::endl;
-            helper_addresses_stream << std::endl;
+            helper_data_stream << "};" << std::endl;
+            helper_data_stream << std::endl;
         }
 
-        // Append helper_addresses_stream to output_stream.
-        output_stream << helper_addresses_stream.str();
+        // Append helper_data_stream to output_stream.
+        output_stream << helper_data_stream.str();
 
         // Emit the program and attach type GUID.
         std::string program_type_name = program_name.c_identifier() + "_program_type_guid";
@@ -1661,9 +1666,8 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             size_t map_count = program.referenced_map_indices.size();
             size_t helper_count = program.helper_functions.size();
             auto map_array_name = map_count ? (program_name.c_identifier() + "_maps") : "NULL";
-            auto helper_array_name = helper_count ? (program_name.c_identifier() + "_helpers") : "NULL";
-            auto helper_array_address_name =
-                helper_count ? (program_name.c_identifier() + "_helper_addresses") : "NULL";
+            auto helper_info_array_name = helper_count ? (program_name.c_identifier() + "_helper_info") : "NULL";
+            auto helper_data_array_name = helper_count ? (program_name.c_identifier() + "_helper_data") : "NULL";
             auto program_type_guid_name = program_name.c_identifier() + "_program_type_guid";
             auto attach_type_guid_name = program_name.c_identifier() + "_attach_type_guid";
             auto program_info_hash_name = program_name.c_identifier() + "_program_info_hash";
@@ -1671,10 +1675,10 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             output_stream << INDENT INDENT << "0," << std::endl;
             output_stream
                 << INDENT INDENT
-                << "{NATIVE_MODULE_PROGRAM_ENTRY_CURRENT_VERSION, NATIVE_MODULE_PROGRAM_ENTRY_CURRENT_VERSION_SIZE},"
+                << "{EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION, EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION_SIZE},"
                 << std::endl;
-            // output_stream << INDENT INDENT << "{" << NATIVE_MODULE_PROGRAM_ENTRY_CURRENT_VERSION << "," <<
-            // NATIVE_MODULE_PROGRAM_ENTRY_CURRENT_VERSION_SIZE << "}," << std::endl;
+            // output_stream << INDENT INDENT << "{" << EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION << "," <<
+            // EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION_SIZE << "}," << std::endl;
             output_stream << INDENT INDENT << program_name.c_identifier() << "," << std::endl;
             output_stream << INDENT INDENT << program.pe_section_name.quoted() << "," << std::endl;
             output_stream << INDENT INDENT << name.quoted() << "," << std::endl;
@@ -1682,8 +1686,8 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
             output_stream << INDENT INDENT << map_array_name << "," << std::endl;
             output_stream << INDENT INDENT << program.referenced_map_indices.size() << "," << std::endl;
             output_stream << INDENT INDENT << program.helper_functions.size() << "," << std::endl;
-            output_stream << INDENT INDENT << helper_array_name.c_str() << "," << std::endl;
-            output_stream << INDENT INDENT << helper_array_address_name.c_str() << "," << std::endl;
+            output_stream << INDENT INDENT << helper_info_array_name.c_str() << "," << std::endl;
+            output_stream << INDENT INDENT << helper_data_array_name.c_str() << "," << std::endl;
             output_stream << INDENT INDENT << program.output.size() << "," << std::endl;
             output_stream << INDENT INDENT "&" << program_type_guid_name << "," << std::endl;
             output_stream << INDENT INDENT "&" << attach_type_guid_name << "," << std::endl;
@@ -1754,8 +1758,8 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
         for (const auto& [name, values] : map_initial_values) {
             output_stream << INDENT "{" << std::endl;
             output_stream << INDENT INDENT
-                          << "{NATIVE_MODULE_MAP_INITIAL_VALUES_CURRENT_VERSION, "
-                             "NATIVE_MODULE_MAP_INITIAL_VALUES_CURRENT_VERSION_SIZE},"
+                          << "{EBPF_NATIVE_MAP_INITIAL_VALUES_CURRENT_VERSION, "
+                             "EBPF_NATIVE_MAP_INITIAL_VALUES_CURRENT_VERSION_SIZE},"
                           << std::endl;
             output_stream << INDENT INDENT << ".name = " << name.quoted() << "," << std::endl;
             output_stream << INDENT INDENT << ".count = " << values.size() << "," << std::endl;
@@ -1786,7 +1790,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
 
     std::string meta_data_table = "metadata_table_t " + c_name.c_identifier() + "_metadata_table = {";
     meta_data_table +=
-        "{NATIVE_MODULE_METADATA_TABLE_CURRENT_VERSION, NATIVE_MODULE_METADATA_TABLE_CURRENT_VERSION_SIZE}, "
+        "{EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION, EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION_SIZE}, "
         "sizeof(metadata_table_t), _get_programs, _get_maps, _get_hash, _get_version, _get_map_initial_values};\n";
 
     if ((meta_data_table.size() - 1) > LINE_BREAK_WIDTH) {

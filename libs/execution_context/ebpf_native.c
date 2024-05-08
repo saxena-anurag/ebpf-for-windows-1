@@ -504,12 +504,12 @@ _ebpf_validate_extension_object_header(_In_ const ebpf_extension_header_t* heade
 // static bool
 // _ebpf_validate_metadata_table(_In_ const metadata_table_t* table)
 // {
-//     if (table->header.version != NATIVE_MODULE_METADATA_TABLE_CURRENT_VERSION ||
-//         table->header.size < NATIVE_MODULE_METADATA_TABLE_CURRENT_VERSION_SIZE) {
+//     if (table->header.version != EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION ||
+//         table->header.size < EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION_SIZE) {
 //         return EBPF_INVALID_ARGUMENT;
 //     }
 
-//     if (table->header.size < NATIVE_MODULE_METADATA_TABLE_CURRENT_VERSION_SIZE) {
+//     if (table->header.size < EBPF_NATIVE_METADATA_TABLE_CURRENT_VERSION_SIZE) {
 //         return EBPF_INVALID_ARGUMENT;
 //     }
 
@@ -1165,8 +1165,8 @@ _ebpf_native_create_maps(_Inout_ ebpf_native_module_t* module)
 
     // // Check that the map size and version are compatible.
     // for (uint32_t i = 0; i < map_count; i++) {
-    //     if (maps[i].header.version != NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION ||
-    //         maps[i].header.size > NATIVE_MODULE_MAP_ENTRY_CURRENT_VERSION_SIZE) {
+    //     if (maps[i].header.version != EBPF_NATIVE_MAP_ENTRY_CURRENT_VERSION ||
+    //         maps[i].header.size > EBPF_NATIVE_MAP_ENTRY_CURRENT_VERSION_SIZE) {
     //         EBPF_LOG_MESSAGE_GUID(
     //             EBPF_TRACELOG_LEVEL_ERROR,
     //             EBPF_TRACELOG_KEYWORD_NATIVE,
@@ -1481,6 +1481,8 @@ _ebpf_duplicate_program_entry(_In_ const program_entry_t* source_entry, _Outptr_
 
     // Note: We only need to deep copy the entries in the native entry that are versioned, and are not to be modified.
     memcpy(local_destination_entry, source_entry, source_entry->header.size);
+    local_destination_entry->header.version = EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION;
+    local_destination_entry->header.size = EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION_SIZE;
 
     local_helper_info = (helper_function_entry_info_t*)ebpf_allocate_with_tag(
         local_destination_entry->helper_count * sizeof(helper_function_entry_info_t), EBPF_POOL_TAG_NATIVE);
@@ -1538,7 +1540,7 @@ _ebpf_native_load_programs(_Inout_ ebpf_native_module_t* module)
 
     // // Check version and size of each program.
     // for (size_t i = 0; i < program_count; i++) {
-    //     if (programs[i].header.version != NATIVE_MODULE_PROGRAM_ENTRY_CURRENT_VERSION) {
+    //     if (programs[i].header.version != EBPF_NATIVE_PROGRAM_ENTRY_CURRENT_VERSION) {
     //         // Add failure trace.
     //         return EBPF_INVALID_ARGUMENT;
     //     }
