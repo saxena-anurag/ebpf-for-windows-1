@@ -1358,6 +1358,8 @@ void
 bpf_code_generator::emit_c_code(std::ostream& output_stream)
 {
     std::stringstream map_address_stream;
+    std::stringstream map_entry_stream;
+
     // Emit C file
     output_stream << "#include \"bpf2c.h\"" << std::endl << std::endl;
 
@@ -1388,7 +1390,7 @@ bpf_code_generator::emit_c_code(std::ostream& output_stream)
     // Emit import tables
     if (map_definitions.size() > 0) {
         output_stream << "#pragma data_seg(push, \"maps\")" << std::endl;
-        output_stream << "static map_entry_t _maps[] = {" << std::endl;
+        output_stream << map_entry_stream << "static map_entry_t _maps[] = {" << std::endl;
         map_address_stream << "static uint64_t _map_addresses[] = {" << std::endl;
         size_t map_size = map_definitions.size();
         // Sort maps by index.
