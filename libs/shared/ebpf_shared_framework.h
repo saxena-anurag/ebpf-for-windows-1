@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
+#include "bpf2c_structs.h"
 #include "cxplat.h"
 #include "ebpf_extension.h"
+// #include "ebpf_native.h"
 #include "ebpf_program_types.h"
 #include "ebpf_result.h"
 #include "ebpf_windows.h"
@@ -13,6 +15,8 @@
 #include <stdint.h>
 
 CXPLAT_EXTERN_C_BEGIN
+
+#define ARRAY_ELEM_INDEX(array, index, elem_size) (((uint8_t*)array) + (index * elem_size));
 
 #define EBPF_COUNT_OF(arr) (sizeof(arr) / sizeof(arr[0]))
 #define EBPF_FROM_FIELD(s, m, o) (s*)((uint8_t*)o - EBPF_OFFSET_OF(s, m))
@@ -148,5 +152,14 @@ ebpf_program_data_free(_In_opt_ ebpf_program_data_t* program_data);
 ebpf_result_t
 ebpf_duplicate_program_data(
     _In_ const ebpf_program_data_t* program_data, _Outptr_ ebpf_program_data_t** new_program_data);
+
+bool
+ebpf_validate_metadata_table(_In_opt_ const metadata_table_t* table);
+
+bool
+ebpf_validate_program_entry_array(_In_reads_(count) const program_entry_t* programs, size_t count);
+
+bool
+ebpf_validate_map_entry_array(_In_reads_(count) const map_entry_t* maps, size_t count);
 
 CXPLAT_EXTERN_C_END
