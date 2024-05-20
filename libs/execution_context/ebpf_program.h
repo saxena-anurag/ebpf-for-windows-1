@@ -6,6 +6,7 @@
 #include "cxplat.h"
 #include "ebpf_link.h"
 #include "ebpf_maps.h"
+#include "ebpf_native.h"
 #include "ebpf_platform.h"
 #include "ebpf_program_types.h"
 #include "ebpf_protocol.h"
@@ -42,7 +43,23 @@ extern "C"
         cxplat_utf8_string_t program_info_hash_type;
     } ebpf_program_parameters_t;
 
+    typedef struct _ebpf_native_code_context
+    {
+        const program_runtime_context_t* runtime_context;
+        const ebpf_native_module_binding_context_t* native_module_context;
+    } ebpf_native_code_context_t;
+
+    typedef struct _ebpf_core_code_context
+    {
+        union
+        {
+            ebpf_native_code_context_t native_code_context;
+        };
+    } ebpf_core_code_context_t;
+
     typedef ebpf_result_t (*ebpf_program_entry_point_t)(void* context);
+    typedef ebpf_result_t (*ebpf_program_native_entry_point_t)(
+        void* context, const program_runtime_context_t* runtime_context);
 
     /**
      * @brief Initialize global state for the ebpf program module.
@@ -189,8 +206,10 @@ extern "C"
      * @param[in,out] context Pointer to eBPF context for this program.
      * @param[out] result Output from the program.
      * @param[in] execution_state Execution context state.
+     * @retval EBPF_SUCCESS The program was successfully invoked.
+     * @retval EBPF_EXTENSION_FAILED_TO_LOAD The program information provider is not available.
      */
-    void
+    _Must_inspect_result_ ebpf_result_t
     ebpf_program_invoke(
         _In_ const ebpf_program_t* program,
         _Inout_ void* context,
