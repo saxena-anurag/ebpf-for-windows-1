@@ -112,7 +112,7 @@ jobs:
       shell: cmd
       run: |
         pwd
-        "${{env.msvc_install_dir}}\vc_redist.x64.exe" /install /passive /norestart
+        "${{env.msvc_install_dir}}Redist\MSVC\v143\vc_redist.x64.exe" /install /passive /norestart
 
     - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
       if: steps.skip_check.outputs.should_skip != 'true'
