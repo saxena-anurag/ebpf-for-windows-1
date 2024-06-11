@@ -152,6 +152,11 @@ jobs:
 
         echo "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+    - name: Print GITHUB_PATH
+      if: steps.skip_check.outputs.should_skip != 'true'
+      run: |
+        Write-Host "GITHUB_PATH: $env:GITHUB_PATH"
+
     - name: Setup choco cache folder
       # Set the choco cache to a local folder so that it can be cached.
       if: steps.skip_check.outputs.should_skip != 'true'
