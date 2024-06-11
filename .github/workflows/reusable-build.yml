@@ -103,7 +103,16 @@ jobs:
         powershell.exe "echo 'msvc_tools_path=%VCToolsInstallDir%' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
         powershell.exe "echo 'msvc_redist_path=%VCToolsRedistDir%' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
         powershell.exe "echo 'msvc_tools_version=%VCToolsVersion%' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
+        powershell.exe "echo 'msvc_install_dir=%VCINSTALLDIR%' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
         powershell.exe "echo 'ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=true' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
+
+    - name: Install VC redistributable binaries
+      if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
+      working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
+      shell: cmd
+      run: |
+        pwd
+        "${{env.msvc_install_dir}}\vc_redist.x64.exe" /install /passive /norestart
 
     - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
       if: steps.skip_check.outputs.should_skip != 'true'
