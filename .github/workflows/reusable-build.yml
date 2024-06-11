@@ -235,23 +235,6 @@ jobs:
       run: |
         copy "${{env.msvc_tools_path}}\bin\Hostx64\x64\clang*" .
 
-    - name: Copy latest VC Redist binaries
-      if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
-      working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
-      shell: cmd
-      run: |
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\concrt140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_1.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_2.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_atomic_wait.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_codecvt_ids.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vccorlib140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vcruntime140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vcruntime140_1.dll" .
-
-        powershell.exe "echo '${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append"
-
     - name: Download demo Debug repository
       if: steps.skip_check.outputs.should_skip != 'true' && (matrix.configurations == 'Debug' || matrix.configurations == 'NativeOnlyDebug')
       working-directory: ${{env.GITHUB_WORKSPACE}}
