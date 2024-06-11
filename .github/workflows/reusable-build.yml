@@ -209,7 +209,6 @@ jobs:
         copy "${{env.msvc_tools_path}}\bin\Hostx64\x64\clang*" .
 
     - name: Copy latest VC Redist binaries
-      if: steps.skip_check.outputs.should_skip != 'true'
       if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
       working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
       shell: cmd
