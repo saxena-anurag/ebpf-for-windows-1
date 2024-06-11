@@ -132,22 +132,24 @@ jobs:
     - name: Copy latest VC Redist binaries0
       if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
       # working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
-      shell: cmd
+      shell: powershell
       run: |
-        mkdir ./${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
+        mkdir .\${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
         cd ${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
-        dir "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT"
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\concrt140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_1.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_2.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_atomic_wait.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\msvcp140_codecvt_ids.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vccorlib140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vcruntime140.dll" .
-        copy "${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT\vcruntime140_1.dll" .
+        Write-Host "Displaying the contents of the msvc_tools_path directory"
+        dir "${{env.msvc_tools_path}}"
+        dir "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT"
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\concrt140.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_1.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_2.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_atomic_wait.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_codecvt_ids.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\vccorlib140.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140.dll" .
+        copy "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140_1.dll" .
 
-        powershell.exe "echo '${{env.msvc_tools_path}}onecore\x64\Microsoft.VC143.CRT' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append"
+        echo "${{env.msvc_tools_path}}\onecore\x64\Microsoft.VC143.CRT" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append"
 
     - name: Setup choco cache folder
       # Set the choco cache to a local folder so that it can be cached.
