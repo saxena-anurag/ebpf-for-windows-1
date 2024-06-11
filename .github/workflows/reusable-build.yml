@@ -137,6 +137,7 @@ jobs:
       run: |
         mkdir .\${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
         cd ${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
+        pwd
         Write-Host "Displaying the contents of the msvc_redist_path directory"
         dir "${{env.msvc_redist_path}}"
         dir "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT"
