@@ -155,7 +155,7 @@ jobs:
     - name: Print GITHUB_PATH
       if: steps.skip_check.outputs.should_skip != 'true'
       run: |
-        Write-Host "GITHUB_PATH: $env:GITHUB_PATH"
+        Write-Host "GITHUB_PATH: $env:PATH"
 
     - name: Setup choco cache folder
       # Set the choco cache to a local folder so that it can be cached.
