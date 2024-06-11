@@ -130,34 +130,6 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce
 
-    - name: Copy latest VC Redist binaries0
-      if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
-      # working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
-      shell: powershell
-      run: |
-        mkdir .\${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
-        cd ${{env.BUILD_PLATFORM}}\${{env.BUILD_CONFIGURATION}}
-        pwd
-        Write-Host "Displaying the contents of the msvc_redist_path directory"
-        dir "${{env.msvc_redist_path}}"
-        dir "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT"
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\concrt140.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_1.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_2.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_atomic_wait.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_codecvt_ids.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vccorlib140.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140.dll" .
-        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140_1.dll" .
-
-        echo "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-    - name: Print GITHUB_PATH
-      if: steps.skip_check.outputs.should_skip != 'true'
-      run: |
-        Write-Host "GITHUB_PATH: $env:PATH"
-
     - name: Setup choco cache folder
       # Set the choco cache to a local folder so that it can be cached.
       if: steps.skip_check.outputs.should_skip != 'true'
@@ -223,6 +195,32 @@ jobs:
       working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
       run: |
         ..\..\scripts\check_binary_dependencies.ps1 -BuildArtifact "${{inputs.build_artifact}}_${{env.BUILD_CONFIGURATION}}" -VsToolsPath "${{env.msvc_tools_path}}"
+
+    - name: Copy latest VC Redist binaries
+      if: steps.skip_check.outputs.should_skip != 'true' && ((matrix.configurations == 'Release') || (matrix.configurations == 'NativeOnlyRelease'))
+      working-directory: ./${{env.BUILD_PLATFORM}}/${{env.BUILD_CONFIGURATION}}
+      shell: powershell
+      run: |
+        pwd
+        Write-Host "Displaying the contents of the msvc_redist_path directory"
+        dir "${{env.msvc_redist_path}}"
+        dir "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT"
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\concrt140.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_1.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_2.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_atomic_wait.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\msvcp140_codecvt_ids.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vccorlib140.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140.dll" .
+        copy "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT\vcruntime140_1.dll" .
+
+        echo "${{env.msvc_redist_path}}\onecore\x64\Microsoft.VC143.CRT" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Print GITHUB_PATH
+      if: steps.skip_check.outputs.should_skip != 'true'
+      run: |
+        Write-Host "GITHUB_PATH: $env:PATH"
 
     - name: Test the MSI
       if: steps.skip_check.outputs.should_skip != 'true' && ((inputs.build_artifact == 'Build-x64' && matrix.configurations == 'Debug') || (inputs.build_artifact == 'Build-x64-native-only' && matrix.configurations == 'NativeOnlyRelease'))
