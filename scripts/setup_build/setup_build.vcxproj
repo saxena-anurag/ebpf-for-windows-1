@@ -275,9 +275,6 @@ powershell -NonInteractive -ExecutionPolicy Unrestricted $(SolutionDir)scripts\g
 copy "$(VC_DebugCppRuntimeFilesPath_x64)\Microsoft.VC143.DebugCRT\*" "$(OutDir)"
 copy "$(UniversalDebugCRT_ExecutablePath_x64)\ucrtbased.dll" "$(OutDir)"</Command>
     </PreBuildEvent>
-    <PostBuildEvent>
-      <Command>xcopy "$(VCToolsRedistInstallDir)onecore\x64\Microsoft.VC143.CRT\concrt140.dll" $(SolutionDir)$(Platform)\$(Configuration) /Y</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='FuzzerDebug|x64'">
     <ClCompile>

@@ -109,7 +109,7 @@ SPDX-License-Identifier: MIT
 		</Directory>
 	</Fragment>
 
-	<!-- Define the VC redist binaries -->
+	<!-- Define the product's <Runtime> components -->
 	<Fragment>
         <?if $(var.IncludeVCRedist) = True ?>
         <ComponentGroup Id="VCRedist" Directory="INSTALLFOLDER">
