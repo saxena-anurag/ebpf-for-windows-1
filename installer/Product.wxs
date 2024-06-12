@@ -20,14 +20,6 @@ SPDX-License-Identifier: MIT
 			<RegistrySearch Id="FindInstallLocation" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[WIX_UPGRADE_DETECTED]" Name="InstallLocation" Type="raw" Win64="yes" />
 		</Property>
 
-		<!-- Install preconditions -->
-		<Property Id="VC_REDIST_INSTALLED" Secure="yes">
-			<RegistrySearch Id="VC_REDIST_RegKey" Type="raw" Root="HKLM" Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64" Name="Version"/>
-		</Property>
-		<Condition Message="This setup requires the 'VC++ Redistributable' v14.x to be installed. Please install it the from: https://aka.ms/vs/17/release/vc_redist.x64.exe">
-			Installed OR VC_REDIST_INSTALLED
-		</Condition>
-
 		<!-- Define the Product features and installation steps -->
 		<Feature Id="ProductFeature" Title="eBPF for Windows Installer" ConfigurableDirectory="INSTALLFOLDER" Display="expand" Level="1" Absent="disallow" AllowAdvertise="no" InstallDefault="local" TypicalDefault="install" >
 			<Feature Id="eBPF_Runtime_Components" Level="1" Title="Runtime Components" Absent="disallow" Display="expand" AllowAdvertise="no" >
@@ -46,6 +38,11 @@ SPDX-License-Identifier: MIT
 				</Feature>
 				<?endif?>
 				<?endif?>
+                <?if $(var.IncludeVCRedist) = True ?>
+                <Feature Id="VCRedist" Title="VC++ Redistributable" Level="11" Absent="disallow" AllowAdvertise="no" >
+                    <ComponentGroupRef Id="VCRedist" />
+                </Feature>
+                <?endif?>
 			</Feature>
 		</Feature>
 
@@ -112,8 +109,40 @@ SPDX-License-Identifier: MIT
 		</Directory>
 	</Fragment>
 
-	<!-- Define the product's <Runtime> components -->
+	<!-- Define the VC redist binaries -->
 	<Fragment>
+        <?if $(var.IncludeVCRedist) = True ?>
+        <ComponentGroup Id="VCRedist" Directory="INSTALLFOLDER">
+			<Component Id="concrt140" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647a}">
+				<File Id="concrt140.dll" Name="concrt140.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\concrt140.dll" />
+			</Component>
+            <Component Id="msvcp140" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647b}">
+				<File Id="msvcp140.dll" Name="msvcp140.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\msvcp140.dll" />
+			</Component>
+            <Component Id="msvcp140_1" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647c}">
+				<File Id="msvcp140_1.dll" Name="msvcp140_1.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\msvcp140_1.dll" />
+			</Component>
+            <Component Id="msvcp140_2" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647d}">
+				<File Id="msvcp140_2.dll" Name="msvcp140_2.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\msvcp140_2.dll" />
+			</Component>
+            <Component Id="msvcp140_atomic_wait" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647e}">
+				<File Id="msvcp140_atomic_wait.dll" Name="msvcp140_atomic_wait.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\msvcp140_atomic_wait.dll" />
+			</Component>
+            <Component Id="msvcp140_codecvt_ids" Guid="{ba96f793-1d16-4277-b12b-7588bc2e647f}">
+				<File Id="msvcp140_codecvt_ids.dll" Name="msvcp140_codecvt_ids.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\msvcp140_codecvt_ids.dll" />
+			</Component>
+            <Component Id="vccorlib140" Guid="{ba96f793-1d16-4277-b12b-7588bc2e6480}">
+				<File Id="vccorlib140.dll" Name="vccorlib140.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\vccorlib140.dll" />
+			</Component>
+            <Component Id="vcruntime140" Guid="{ba96f793-1d16-4277-b12b-7588bc2e6481}">
+				<File Id="vcruntime140.dll" Name="vcruntime140.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\vcruntime140.dll" />
+			</Component>
+            <Component Id="vcruntime140_1" Guid="{ba96f793-1d16-4277-b12b-7588bc2e6482}">
+				<File Id="vcruntime140_1.dll" Name="vcruntime140_1.dll" DiskId="1" Source="$(var.SolutionDir)x64\$(var.Configuration)\vcruntime140_1.dll" />
+			</Component>
+		</ComponentGroup>
+        <?endif?>
+
 		<ComponentGroup Id="eBPF_Runtime_Components" Directory="INSTALLFOLDER">
 			<Component Id ="eBpfPATH" Guid="{C062B980-4B93-4FC7-A4F9-A751C2B419FD}" KeyPath="yes">
 				<Environment Id="eBpfPATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" Separator=";" />
