@@ -300,6 +300,35 @@ extern "C"
     ebpf_object_unpin(_In_z_ const char* path) EBPF_NO_EXCEPT;
 
     /**
+     * @brief Obtain information about the eBPF object referred to by bpf_fd.
+     * This function populates up to info_len bytes of info, which will
+     * be in one of the following formats depending on the eBPF object type of
+     * bpf_fd:
+     *
+     * * struct bpf_link_info
+     * * struct bpf_map_info
+     * * struct bpf_prog_info
+     *
+     * @param[in] bpf_fd File descriptor referring to an eBPF object.
+     * @param[in, out] info Pointer to memory in which to write the info obtained.
+     * On input, contains any additional parameters to use. May be NULL in order to
+     * only retrieve the type of the object.
+     * @param[in, out] info_size On input, contains the maximum number of bytes to
+     * write into the info. On output, contains the actual number of bytes written.
+     * May be NULL if info is NULL.
+     * @param[out] type Optional type of the object.
+     *
+     * @retval EBPF_SUCCESS The operation was successful.
+     * @retval EBPF_INVALID_ARGUMENT One or more parameters are wrong.
+     */
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_object_get_info_by_fd(
+        fd_t bpf_fd,
+        _Inout_updates_bytes_to_opt_(*info_size, *info_size) void* info,
+        _Inout_opt_ uint32_t* info_size,
+        _Out_opt_ ebpf_object_type_t* type) EBPF_NO_EXCEPT;
+
+    /**
      * @brief Detach the eBPF program from the link.
      *
      * @param[in] link_handle Handle to the link.
@@ -369,6 +398,27 @@ extern "C"
     _Must_inspect_result_ ebpf_result_t
     ebpf_object_set_execution_type(_Inout_ struct bpf_object* object, ebpf_execution_type_t execution_type)
         EBPF_NO_EXCEPT;
+
+    /**
+     * @brief Load a native image from a file and return map and program file
+     * descriptors.
+     *
+     * @param[in] file_name Path to the eBPF object file.
+     * @param[in, out] count_of_maps Size of map_fds.
+     * @param[in] map_fds Pre-allocated array for map file descriptors.
+     * @param[in, out] count_of_programs Size of program_fds.
+     * @param[in] program_fds Pre-allocated array for program file descriptors.
+     *
+     * @retval EBPF_SUCCESS The operation was successful.
+     * @retval EBPF_NO_MEMORY Either count_of_maps or count_of_programs was too small.
+     */
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_object_load_native_by_fds(
+        _In_z_ const char* file_name,
+        _Inout_ size_t* count_of_maps,
+        _Out_writes_opt_(*count_of_maps) fd_t* map_fds,
+        _Inout_ size_t* count_of_programs,
+        _Out_writes_opt_(*count_of_programs) fd_t* program_fds) EBPF_NO_EXCEPT;
 
     /**
      * @brief Attach an eBPF program.
@@ -547,8 +597,8 @@ extern "C"
      * @deprecated Use ebpf_get_next_pinned_object_path() instead.
      */
     __declspec(deprecated("Use ebpf_get_next_pinned_object_path() instead.")) _Must_inspect_result_ ebpf_result_t
-        ebpf_get_next_pinned_program_path(
-            _In_z_ const char* start_path, _Out_writes_z_(EBPF_MAX_PIN_PATH_LENGTH) char* next_path) EBPF_NO_EXCEPT;
+    ebpf_get_next_pinned_program_path(
+        _In_z_ const char* start_path, _Out_writes_z_(EBPF_MAX_PIN_PATH_LENGTH) char* next_path) EBPF_NO_EXCEPT;
 
     /**
      * @brief Retrieve the next pinned path of an eBPF object.

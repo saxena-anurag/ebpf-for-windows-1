@@ -29,7 +29,6 @@ typedef struct _ebpf_core_object_map
     ebpf_lock_t lock;
     ebpf_map_definition_in_memory_t inner_template_map_definition;
     bool is_program_type_set;
-    bool supports_context_header;
     ebpf_program_type_t program_type;
 } ebpf_core_object_map_t;
 
@@ -178,7 +177,7 @@ typedef struct _ebpf_core_lru_map
 {
     ebpf_core_map_t core_map; //< Core map structure.
     size_t partition_count;   //< Number of LRU partitions. Limited to a maximum of EBPF_LRU_MAXIMUM_PARTITIONS.
-    uint8_t padding[16];      //< Required to ensure partitions are cache aligned.
+    uint8_t padding[24];      //< Required to ensure partitions are cache aligned.
     ebpf_lru_partition_t
         partitions[1]; //< Array of LRU partitions. Limited to a maximum of EBPF_LRU_MAXIMUM_PARTITIONS.
 } ebpf_core_lru_map_t;
@@ -369,13 +368,6 @@ _get_map_program_type(_In_ const ebpf_core_object_t* object)
 {
     const ebpf_core_object_map_t* map = (const ebpf_core_object_map_t*)object;
     return map->program_type;
-}
-
-static bool
-_ebpf_map_get_program_context_header_support(_In_ const ebpf_core_object_t* object)
-{
-    const ebpf_core_object_map_t* map = (const ebpf_core_object_map_t*)object;
-    return map->supports_context_header;
 }
 
 typedef struct _ebpf_map_metadata_table
@@ -726,10 +718,8 @@ _associate_program_with_prog_array_map(_Inout_ ebpf_core_map_t* map, _In_ const 
     ebpf_assert(map->ebpf_map_definition.type == BPF_MAP_TYPE_PROG_ARRAY);
     ebpf_core_object_map_t* program_array = EBPF_FROM_FIELD(ebpf_core_object_map_t, core_map, map);
 
-    // Validate that the program type and context header support is
-    // not in conflict with the map's program type.
+    // Validate that the program type is not in conflict with the map's program type.
     ebpf_program_type_t program_type = ebpf_program_type_uuid(program);
-    bool supports_context_header = ebpf_program_supports_context_header(program);
     ebpf_result_t result = EBPF_SUCCESS;
 
     ebpf_lock_state_t lock_state = ebpf_lock_lock(&program_array->lock);
@@ -737,10 +727,7 @@ _associate_program_with_prog_array_map(_Inout_ ebpf_core_map_t* map, _In_ const 
     if (!program_array->is_program_type_set) {
         program_array->is_program_type_set = TRUE;
         program_array->program_type = program_type;
-        program_array->supports_context_header = supports_context_header;
-    } else if (
-        memcmp(&program_array->program_type, &program_type, sizeof(program_type)) != 0 ||
-        program_array->supports_context_header != supports_context_header) {
+    } else if (memcmp(&program_array->program_type, &program_type, sizeof(program_type)) != 0) {
         result = EBPF_INVALID_FD;
     }
 
@@ -780,14 +767,10 @@ static _Requires_lock_held_(object_map->lock) ebpf_result_t _validate_map_value_
     const ebpf_core_map_t* map = &object_map->core_map;
 
     ebpf_program_type_t value_program_type = {0};
-    bool value_supports_context_header = false;
     bool is_program_type_set = false;
 
     if (value_object->get_program_type) {
         value_program_type = value_object->get_program_type(value_object);
-        ebpf_assert(value_object->get_context_header_support != NULL);
-        __analysis_assume(value_object->get_context_header_support != NULL);
-        value_supports_context_header = value_object->get_context_header_support(value_object);
         is_program_type_set = true;
     }
 
@@ -805,10 +788,7 @@ static _Requires_lock_held_(object_map->lock) ebpf_result_t _validate_map_value_
         if (!object_map->is_program_type_set) {
             object_map->is_program_type_set = TRUE;
             object_map->program_type = value_program_type;
-            object_map->supports_context_header = value_supports_context_header;
-        } else if (
-            memcmp(&object_map->program_type, &value_program_type, sizeof(value_program_type)) != 0 ||
-            object_map->supports_context_header != value_supports_context_header) {
+        } else if (memcmp(&object_map->program_type, &value_program_type, sizeof(value_program_type)) != 0) {
             result = EBPF_INVALID_FD;
             goto Error;
         }
@@ -2098,8 +2078,12 @@ static _Requires_lock_held_(ring_buffer_map->lock) void _ebpf_ring_buffer_map_si
         ebpf_core_ring_buffer_map_async_query_context_t* context = EBPF_FROM_FIELD(
             ebpf_core_ring_buffer_map_async_query_context_t, entry, ring_buffer_map->async_contexts.Flink);
         ebpf_ring_buffer_map_async_query_result_t* async_query_result = context->async_query_result;
-        ebpf_ring_buffer_query(
-            (ebpf_ring_buffer_t*)map->data, &async_query_result->consumer, &async_query_result->producer);
+        size_t consumer;
+        ebpf_ring_buffer_query((ebpf_ring_buffer_t*)map->data, &consumer, &async_query_result->producer);
+        if (consumer > async_query_result->consumer) {
+            // We will normally already have the latest consumer value - only update if we see an increase.
+            async_query_result->consumer = consumer;
+        }
         ebpf_list_remove_entry(&context->entry);
         ebpf_operation_ring_buffer_map_async_query_reply_t* reply =
             EBPF_FROM_FIELD(ebpf_operation_ring_buffer_map_async_query_reply_t, async_query_result, async_query_result);
@@ -2231,18 +2215,7 @@ ebpf_ring_buffer_map_query_buffer(_In_ const ebpf_map_t* map, _Outptr_ uint8_t**
 _Must_inspect_result_ ebpf_result_t
 ebpf_ring_buffer_map_return_buffer(_In_ const ebpf_map_t* map, size_t consumer_offset)
 {
-    size_t producer_offset;
-    size_t old_consumer_offset;
-    size_t consumed_data_length;
-    EBPF_LOG_ENTRY();
-    ebpf_ring_buffer_query((ebpf_ring_buffer_t*)map->data, &old_consumer_offset, &producer_offset);
-    ebpf_result_t result = ebpf_safe_size_t_subtract(consumer_offset, old_consumer_offset, &consumed_data_length);
-    if (result != EBPF_SUCCESS) {
-        goto Exit;
-    }
-    result = ebpf_ring_buffer_return((ebpf_ring_buffer_t*)map->data, consumed_data_length);
-Exit:
-    EBPF_RETURN_RESULT(result);
+    return ebpf_ring_buffer_return_buffer((ebpf_ring_buffer_t*)map->data, consumer_offset);
 }
 
 _Must_inspect_result_ ebpf_result_t
@@ -2282,9 +2255,12 @@ ebpf_ring_buffer_map_async_query(
     ebpf_list_insert_tail(&ring_buffer_map->async_contexts, &context->entry);
     ring_buffer_map->async_contexts_trip_wire = true;
 
+    size_t consumer;
     // If there is already some data available in the ring buffer, indicate the results right away.
-    ebpf_ring_buffer_query(
-        (ebpf_ring_buffer_t*)map->data, &async_query_result->consumer, &async_query_result->producer);
+    ebpf_ring_buffer_query((ebpf_ring_buffer_t*)map->data, &consumer, &async_query_result->producer);
+    if (consumer > async_query_result->consumer) {
+        async_query_result->consumer = consumer;
+    }
 
     if (async_query_result->producer != async_query_result->consumer) {
         _ebpf_ring_buffer_map_signal_async_query_complete(ring_buffer_map);
@@ -2521,10 +2497,7 @@ ebpf_map_create(
     }
 
     ebpf_object_get_program_type_t get_program_type = (table->get_object_from_entry) ? _get_map_program_type : NULL;
-    ebpf_object_get_context_header_support_t get_context_header_support =
-        (table->get_object_from_entry) ? _ebpf_map_get_program_context_header_support : NULL;
-    result = EBPF_OBJECT_INITIALIZE(
-        &local_map->object, EBPF_OBJECT_MAP, _ebpf_map_delete, NULL, get_program_type, get_context_header_support);
+    result = EBPF_OBJECT_INITIALIZE(&local_map->object, EBPF_OBJECT_MAP, _ebpf_map_delete, NULL, get_program_type);
     if (result != EBPF_SUCCESS) {
         goto Exit;
     }

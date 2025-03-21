@@ -1047,7 +1047,7 @@ TEST_CASE("libbpf create queue", "[libbpf]")
     REQUIRE(info.value_size == value_size);
     REQUIRE(info.max_entries == max_entries);
     REQUIRE(info.map_flags == 0);
-    REQUIRE(info.inner_map_id == -1);
+    REQUIRE(info.inner_map_id == EBPF_ID_NONE);
     REQUIRE(info.pinned_path_count == 0);
     REQUIRE(info.id > 0);
     REQUIRE(strcmp(info.name, "MapName") == 0);
@@ -1106,7 +1106,7 @@ TEST_CASE("libbpf create ringbuf", "[libbpf]")
     REQUIRE(info.value_size == 0);
     REQUIRE(info.max_entries == max_entries);
     REQUIRE(info.map_flags == 0);
-    REQUIRE(info.inner_map_id == -1);
+    REQUIRE(info.inner_map_id == EBPF_ID_NONE);
     REQUIRE(info.pinned_path_count == 0);
     REQUIRE(info.id > 0);
     REQUIRE(strcmp(info.name, "MapName") == 0);
@@ -1404,7 +1404,7 @@ _ebpf_test_tail_call(_In_z_ const char* filename, uint32_t expected_result)
     REQUIRE(error == 0);
 
     // Is bpf_tail_call expected to work?
-    // Verify stack unwind occured.
+    // Verify stack unwind occurred.
     if ((int)expected_result >= 0) {
         REQUIRE(value == 0);
     } else {
@@ -1669,71 +1669,6 @@ TEST_CASE("disallow prog_array mixed program type values", "[libbpf]")
     Platform::_close(map_fd);
     bpf_object__close(bind_object);
     bpf_object__close(sample_object);
-}
-
-TEST_CASE("disallow prog_array mixed context_header support", "[libbpf]")
-{
-    _test_helper_end_to_end test_helper;
-    test_helper.initialize();
-    program_info_provider_t bind_program_info;
-    REQUIRE(bind_program_info.initialize(EBPF_PROGRAM_TYPE_BIND) == EBPF_SUCCESS);
-    int program1_fd;
-    int program2_fd;
-    struct bpf_object* sample_object1 = nullptr;
-    struct bpf_object* sample_object2 = nullptr;
-
-    // Load the same program 2 times, but with different "context_header" support from providers.
-
-    // First load program with context header support.
-    {
-        program_info_provider_t sample_program_info;
-        REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
-
-        sample_object1 = bpf_object__open("test_sample_ebpf.o");
-        REQUIRE(sample_object1 != nullptr);
-        // Load the program(s).
-        REQUIRE(bpf_object__load(sample_object1) == 0);
-        struct bpf_program* sample_program = bpf_object__find_program_by_name(sample_object1, "test_program_entry");
-        program1_fd = bpf_program__fd(const_cast<const bpf_program*>(sample_program));
-
-        // Extension will unload now.
-    }
-
-    // Now load program without context header support.
-    {
-        ebpf_program_data_t changed_program_data = _test_ebpf_sample_extension_program_data;
-        changed_program_data.capabilities.value = 0;
-        program_info_provider_t sample_program_info;
-        REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE, &changed_program_data) == EBPF_SUCCESS);
-
-        sample_object2 = bpf_object__open("test_sample_ebpf.o");
-        REQUIRE(sample_object2 != nullptr);
-        // Load the program(s).
-        REQUIRE(bpf_object__load(sample_object2) == 0);
-        struct bpf_program* sample_program = bpf_object__find_program_by_name(sample_object2, "test_program_entry");
-        program2_fd = bpf_program__fd(const_cast<const bpf_program*>(sample_program));
-
-        // Extension will unload now.
-    }
-
-    // Create a map.
-    int map_fd = bpf_map_create(BPF_MAP_TYPE_PROG_ARRAY, nullptr, sizeof(uint32_t), sizeof(uint32_t), 2, nullptr);
-    REQUIRE(map_fd > 0);
-
-    // Since the map is not yet associated with a program, the first program fd
-    // we add will become the PROG_ARRAY's program type.
-    int index = 0;
-    int error = bpf_map_update_elem(map_fd, (uint8_t*)&index, (uint8_t*)&program1_fd, 0);
-    REQUIRE(error == 0);
-
-    // Adding an entry with same program type but different context_header support should fail.
-    error = bpf_map_update_elem(map_fd, (uint8_t*)&index, (uint8_t*)&program2_fd, 0);
-    REQUIRE(error < 0);
-    REQUIRE(errno == EBADF);
-
-    Platform::_close(map_fd);
-    bpf_object__close(sample_object1);
-    bpf_object__close(sample_object2);
 }
 #endif
 

@@ -1149,10 +1149,12 @@ TEST_CASE("program", "[execution_context]")
             program.get(), EBPF_CODE_JIT, nullptr, reinterpret_cast<uint8_t*>(test_function), PAGE_SIZE) ==
         EBPF_SUCCESS);
     uint32_t result = 0;
-    sample_program_context_t ctx{0};
+    sample_program_context_header_t ctx_header{0};
+    sample_program_context_t* ctx = &ctx_header.context;
+
     ebpf_execution_context_state_t state{};
     ebpf_get_execution_context_state(&state);
-    ebpf_result_t ebpf_result = ebpf_program_invoke(program.get(), false, &ctx, &result, &state);
+    ebpf_result_t ebpf_result = ebpf_program_invoke(program.get(), ctx, &result, &state);
     REQUIRE(ebpf_result == EBPF_SUCCESS);
     REQUIRE(result == TEST_FUNCTION_RETURN);
 
@@ -1296,7 +1298,7 @@ TEST_CASE("test-csum-diff", "[execution_context]")
     REQUIRE(csum == 0xb861);
 }
 
-TEST_CASE("ring_buffer_async_query", "[execution_context]")
+TEST_CASE("ring_buffer_async_query", "[execution_context][ring_buffer]")
 {
     _ebpf_core_initializer core;
     core.initialize();
@@ -1315,11 +1317,13 @@ TEST_CASE("ring_buffer_async_query", "[execution_context]")
         uint8_t* buffer = nullptr;
         size_t consumer_offset = 0;
         ebpf_ring_buffer_map_async_query_result_t async_query_result = {};
-        uint64_t value{};
+        volatile uint64_t value{};
     } completion;
 
     REQUIRE(
         ebpf_ring_buffer_map_query_buffer(map.get(), &completion.buffer, &completion.consumer_offset) == EBPF_SUCCESS);
+    // Initialize consumer offset in async result used to track current position.
+    completion.async_query_result.consumer = completion.consumer_offset;
 
     REQUIRE(
         ebpf_async_set_completion_callback(
@@ -2193,7 +2197,7 @@ TEST_CASE("EBPF_OPERATION_GET_OBJECT_INFO", "[execution_context][negative]")
     REQUIRE(invoke_protocol(EBPF_OPERATION_GET_OBJECT_INFO, request, reply) == EBPF_INVALID_OBJECT);
 }
 
-TEST_CASE("EBPF_OPERATION_RING_BUFFER_MAP_QUERY_BUFFER", "[execution_context][negative]")
+TEST_CASE("EBPF_OPERATION_RING_BUFFER_MAP_QUERY_BUFFER", "[execution_context][ring_buffer][negative]")
 {
     NEGATIVE_TEST_PROLOG();
     ebpf_operation_ring_buffer_map_query_buffer_request_t request;
@@ -2206,7 +2210,7 @@ TEST_CASE("EBPF_OPERATION_RING_BUFFER_MAP_QUERY_BUFFER", "[execution_context][ne
     REQUIRE(invoke_protocol(EBPF_OPERATION_RING_BUFFER_MAP_QUERY_BUFFER, request, reply) == EBPF_INVALID_ARGUMENT);
 }
 
-TEST_CASE("EBPF_OPERATION_RING_BUFFER_MAP_ASYNC_QUERY", "[execution_context][negative]")
+TEST_CASE("EBPF_OPERATION_RING_BUFFER_MAP_ASYNC_QUERY", "[execution_context][ring_buffer][negative]")
 {
     NEGATIVE_TEST_PROLOG();
     ebpf_operation_ring_buffer_map_async_query_request_t request;
@@ -2346,7 +2350,7 @@ TEST_CASE("INVALID_PROGRAM_DATA", "[execution_context][negative]")
         EBPF_HELPER_FUNCTION_ADDRESSES_HEADER, EBPF_COUNT_OF(helper_functions), (uint64_t*)helper_functions};
 
     ebpf_program_data_t _test_program_data = {
-        EBPF_PROGRAM_DATA_HEADER, &_test_program_info, &helper_function_addresses};
+        EBPF_PROGRAM_DATA_HEADER, &_test_program_info, &helper_function_addresses, nullptr, nullptr, nullptr, 0, {0}};
 
     auto provider_attach_client_callback =
         [](HANDLE, void*, const NPI_REGISTRATION_INSTANCE*, void*, const void*, void**, const void**) -> NTSTATUS {
