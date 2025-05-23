@@ -3568,7 +3568,7 @@ TEST_CASE("recursive_tail_call", "[libbpf]")
     bpf_object__close(object);
 }
 
-TEST_CASE("recursive_tail_call", "[libbpf]")
+TEST_CASE("recursive_tail_call2", "[libbpf]")
 {
     _test_helper_libbpf test_helper;
     test_helper.initialize();
