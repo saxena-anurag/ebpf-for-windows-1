@@ -402,6 +402,20 @@ extern "C"
     ebpf_id_t
     ebpf_map_get_id(_In_ const ebpf_map_t* map);
 
+    // Program array specific reference management APIs.
+    // These manage user and kernel reference counts distinct from the base object reference count.
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_prog_array_map_acquire_user_reference(_Inout_ ebpf_map_t* map);
+
+    void
+    ebpf_prog_array_map_release_user_reference(_Inout_ ebpf_map_t* map);
+
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_prog_array_map_acquire_kernel_reference(_Inout_ ebpf_map_t* map);
+
+    void
+    ebpf_prog_array_map_release_kernel_reference(_Inout_ ebpf_map_t* map);
+
     /**
      * @brief Copy keys and values from the map to the caller provided buffer.
      *

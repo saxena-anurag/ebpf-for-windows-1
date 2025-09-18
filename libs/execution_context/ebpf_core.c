@@ -652,6 +652,15 @@ ebpf_core_create_map(
         goto Done;
     }
 
+    // For program array maps, acquiring a user handle constitutes a user reference.
+    {
+        const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+        if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+            // Ignore failure (should not fail for correct type); if it does, proceed without extra ref.
+            (void)ebpf_prog_array_map_acquire_user_reference(map);
+        }
+    }
+
     retval = EBPF_SUCCESS;
 
 Done:

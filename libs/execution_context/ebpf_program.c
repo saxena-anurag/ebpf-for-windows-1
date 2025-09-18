@@ -663,7 +663,12 @@ _ebpf_program_notify_reference_count_zeroed(_In_opt_ _Post_invalid_ ebpf_core_ob
     ebpf_assert(ebpf_list_is_empty(&program->links));
 
     for (index = 0; index < program->count_of_maps; index++) {
-        EBPF_OBJECT_RELEASE_REFERENCE((ebpf_core_object_t*)program->maps[index]);
+        ebpf_map_t* map = program->maps[index];
+        const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+        if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+            ebpf_prog_array_map_release_kernel_reference(map);
+        }
+        EBPF_OBJECT_RELEASE_REFERENCE((ebpf_core_object_t*)map);
     }
 
     EBPF_RETURN_VOID();
@@ -1006,6 +1011,12 @@ ebpf_program_associate_additional_map(ebpf_program_t* program, ebpf_map_t* map)
     }
 
     EBPF_OBJECT_ACQUIRE_REFERENCE((ebpf_core_object_t*)map);
+    {
+        const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+        if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+            (void)ebpf_prog_array_map_acquire_kernel_reference(map);
+        }
+    }
     program_maps[map_count - 1] = map;
     program->maps = program_maps;
     program->count_of_maps = map_count;
@@ -1054,7 +1065,14 @@ ebpf_program_associate_maps(ebpf_program_t* program, ebpf_map_t** maps, uint32_t
     program_maps = NULL;
     program->count_of_maps = maps_count;
     for (index = 0; index < maps_count; index++) {
-        EBPF_OBJECT_ACQUIRE_REFERENCE((ebpf_core_object_t*)program->maps[index]);
+        ebpf_map_t* map = program->maps[index];
+        EBPF_OBJECT_ACQUIRE_REFERENCE((ebpf_core_object_t*)map);
+        {
+            const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+            if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+                (void)ebpf_prog_array_map_acquire_kernel_reference(map);
+            }
+        }
     }
     ebpf_lock_unlock(&program->lock, state);
 

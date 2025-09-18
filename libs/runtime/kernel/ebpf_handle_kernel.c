@@ -4,6 +4,7 @@
 #define EBPF_FILE_ID EBPF_FILE_ID_HANDLE
 
 #include "ebpf_handle.h"
+#include "ebpf_maps.h"
 #include "ebpf_tracelog.h"
 #include "framework.h"
 
@@ -93,7 +94,28 @@ ebpf_handle_close(ebpf_handle_t handle)
     EBPF_LOG_MESSAGE_UINT64(
         EBPF_TRACELOG_LEVEL_VERBOSE, EBPF_TRACELOG_KEYWORD_CORE, "ebpf_handle_close: closing handle", (uint64_t)handle);
 
-    NTSTATUS status = ObCloseHandle((HANDLE)handle, UserMode);
+    // Before closing, attempt to reference the object to see if it's a map we need to adjust.
+    FILE_OBJECT* file_object = NULL;
+    ebpf_base_object_t* local_object = NULL;
+    NTSTATUS status = ObReferenceObjectByHandle((HANDLE)handle, 0, NULL, UserMode, &file_object, NULL);
+    if (NT_SUCCESS(status)) {
+        local_object = (ebpf_base_object_t*)file_object->FsContext2;
+        if (local_object) {
+            ebpf_core_object_t* core_object = (ebpf_core_object_t*)local_object;
+            if (core_object->type == EBPF_OBJECT_MAP) {
+                ebpf_map_t* map = (ebpf_map_t*)core_object;
+                const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+                if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+                    ebpf_prog_array_map_release_user_reference(map);
+                }
+            }
+        }
+    }
+    if (file_object) {
+        ObDereferenceObject(file_object);
+    }
+
+    status = ObCloseHandle((HANDLE)handle, UserMode);
     if (!NT_SUCCESS(status)) {
         EBPF_LOG_NTSTATUS_API_FAILURE(EBPF_TRACELOG_KEYWORD_BASE, ObCloseHandle, status);
         EBPF_RETURN_RESULT(EBPF_INVALID_OBJECT);
