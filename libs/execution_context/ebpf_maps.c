@@ -14,6 +14,13 @@
 #include "ebpf_ring_buffer.h"
 #include "ebpf_tracelog.h"
 
+#include <stdint.h>
+#if defined(_KERNEL_MODE)
+#include "../runtime/kernel/framework.h"
+#else
+#include "../runtime/user/framework.h"
+#endif
+
 typedef struct _ebpf_core_map
 {
     ebpf_core_object_t object;
@@ -31,6 +38,26 @@ typedef struct _ebpf_core_object_map
     bool is_program_type_set;
     ebpf_program_type_t program_type;
 } ebpf_core_object_map_t;
+
+// Extended structure for program array maps to maintain separate user and kernel reference counts.
+// These reference counts are distinct from the base object reference count held in ebpf_core_map_t.object.base.
+// Semantics:
+//  - user_ref_count: Number of user-mode references (FDs, pins). When this drops to zero, all entries in the
+//    program array are cleared and program ID references released, but the map object itself can stay alive as long
+//    as kernel_ref_count or the base object reference count is non-zero.
+//  - kernel_ref_count: References from kernel mode (e.g., from attached programs that use tail calls). When this
+//    reaches zero (and user_ref_count already zero and no external object references), normal object deletion will
+//    proceed via existing object refcount mechanics.
+// We do not alter the generic object reference model; instead we provide helper APIs to adjust these dual counts
+// specifically for BPF_MAP_TYPE_PROG_ARRAY. The cleanup (entry clearing) is triggered exactly once when user_ref_count
+// transitions 1 -> 0.
+typedef struct _ebpf_core_prog_array_map
+{
+    ebpf_core_object_map_t object_map; // Must be first for existing casts.
+    volatile int32_t user_ref_count;   // User space refs (FDs + pins) specific to prog array maps.
+    volatile int32_t kernel_ref_count; // Kernel space refs.
+    bool entries_cleared;              // Indicates whether we've already cleared entries on user_ref_count==0.
+} ebpf_core_prog_array_map_t;
 
 // Generations:
 // 0: Uninitialized.
@@ -466,6 +493,67 @@ ebpf_map_get_definition(_In_ const ebpf_map_t* map)
     return &map->ebpf_map_definition;
 }
 
+// Forward declarations for prog array dual refcount APIs (internal linkage for now).
+static void
+_ebpf_prog_array_increment_user(_Inout_ ebpf_core_prog_array_map_t* prog_array);
+static void
+_ebpf_prog_array_decrement_user(_Inout_ ebpf_core_prog_array_map_t* prog_array);
+static void
+_ebpf_prog_array_increment_kernel(_Inout_ ebpf_core_prog_array_map_t* prog_array);
+static void
+_ebpf_prog_array_decrement_kernel(_Inout_ ebpf_core_prog_array_map_t* prog_array);
+
+static void
+_ebpf_prog_array_clear_entries(_Inout_ ebpf_core_prog_array_map_t* prog_array)
+{
+    ebpf_core_map_t* map = &prog_array->object_map.core_map;
+    if (prog_array->entries_cleared) {
+        return;
+    }
+    // Iterate entries and release program ID references.
+    for (uint32_t i = 0; i < map->ebpf_map_definition.max_entries; i++) {
+        ebpf_id_t id = *(ebpf_id_t*)&map->data[i * map->ebpf_map_definition.value_size];
+        if (id) {
+            EBPF_OBJECT_RELEASE_ID_REFERENCE(id, EBPF_OBJECT_PROGRAM);
+            memset(&map->data[i * map->ebpf_map_definition.value_size], 0, map->ebpf_map_definition.value_size);
+        }
+    }
+    prog_array->entries_cleared = true;
+}
+
+static void
+_ebpf_prog_array_increment_user(_Inout_ ebpf_core_prog_array_map_t* prog_array)
+{
+    ebpf_interlocked_increment_int32(&prog_array->user_ref_count);
+}
+
+static void
+_ebpf_prog_array_increment_kernel(_Inout_ ebpf_core_prog_array_map_t* prog_array)
+{
+    ebpf_interlocked_increment_int32(&prog_array->kernel_ref_count);
+}
+
+static void
+_ebpf_prog_array_decrement_user(_Inout_ ebpf_core_prog_array_map_t* prog_array)
+{
+    int32_t new_value = ebpf_interlocked_decrement_int32(&prog_array->user_ref_count);
+    if (new_value == 0) {
+        // Take lock while clearing to synchronize with potential concurrent updates.
+        ebpf_lock_state_t state = ebpf_lock_lock(&prog_array->object_map.lock);
+        if (!prog_array->entries_cleared) {
+            _ebpf_prog_array_clear_entries(prog_array);
+        }
+        ebpf_lock_unlock(&prog_array->object_map.lock, state);
+    }
+}
+
+static void
+_ebpf_prog_array_decrement_kernel(_Inout_ ebpf_core_prog_array_map_t* prog_array)
+{
+    ebpf_interlocked_decrement_int32(&prog_array->kernel_ref_count);
+    // No action required here; object lifecycle continues via generic refcount.
+}
+
 uint32_t
 ebpf_map_get_effective_value_size(_In_ const ebpf_map_t* map)
 {
@@ -728,7 +816,11 @@ _create_object_array_map(
         goto Exit;
     }
 
-    result = _create_array_map_with_map_struct_size(sizeof(ebpf_core_object_map_t), map_definition, &local_map);
+    size_t struct_size = sizeof(ebpf_core_object_map_t);
+    if (map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+        struct_size = sizeof(ebpf_core_prog_array_map_t);
+    }
+    result = _create_array_map_with_map_struct_size(struct_size, map_definition, &local_map);
     if (result != EBPF_SUCCESS) {
         goto Exit;
     }
@@ -737,6 +829,12 @@ _create_object_array_map(
     result = _associate_inner_map(object_map, inner_map_handle);
     if (result != EBPF_SUCCESS) {
         goto Exit;
+    }
+    if (map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+        ebpf_core_prog_array_map_t* prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, object_map);
+        prog_array->user_ref_count = 1;   // Initial reference for the creating user handle.
+        prog_array->kernel_ref_count = 0; // No kernel references yet.
+        prog_array->entries_cleared = false;
     }
     *map = local_map;
     local_map = NULL;
@@ -754,6 +852,22 @@ Exit:
 static void
 _delete_program_array_map(_In_ _Post_invalid_ ebpf_core_map_t* map)
 {
+    // If entries were not already cleared via user refcount reaching zero, clear them now.
+    ebpf_core_prog_array_map_t* prog_array = NULL;
+    if (map->ebpf_map_definition.type == BPF_MAP_TYPE_PROG_ARRAY) {
+        prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, map);
+        if (!prog_array->entries_cleared) {
+            // Release all entry references.
+            for (uint32_t i = 0; i < map->ebpf_map_definition.max_entries; i++) {
+                ebpf_id_t id = *(ebpf_id_t*)&map->data[i * map->ebpf_map_definition.value_size];
+                if (id) {
+                    EBPF_OBJECT_RELEASE_ID_REFERENCE(id, EBPF_OBJECT_PROGRAM);
+                    memset(&map->data[i * map->ebpf_map_definition.value_size], 0, map->ebpf_map_definition.value_size);
+                }
+            }
+            prog_array->entries_cleared = true;
+        }
+    }
     _delete_object_array_map(map, EBPF_OBJECT_PROGRAM);
 }
 
@@ -1950,7 +2064,7 @@ _find_lpm_map_entry(
     // - Uses the passed in key for iteration by overwriting the prefix length.
     ebpf_bitmap_start_reverse_search_at((ebpf_bitmap_t*)trie_map->data, &cursor, original_prefix_length);
     lpm_key->prefix_length = (uint32_t)ebpf_bitmap_reverse_search_next_bit(&cursor);
-    while (lpm_key->prefix_length != MAXUINT32) {
+    while (lpm_key->prefix_length != UINT32_MAX) {
         if (_find_hash_map_entry(map, key, false, &value) == EBPF_SUCCESS) {
             break;
         }
@@ -3596,6 +3710,49 @@ ebpf_id_t
 ebpf_map_get_id(_In_ const ebpf_map_t* map)
 {
     return map->object.id;
+}
+
+// Publicly exposed helper APIs for managing dual refcounts on program array maps.
+_Must_inspect_result_ ebpf_result_t
+ebpf_prog_array_map_acquire_user_reference(_Inout_ ebpf_map_t* map)
+{
+    if (map->ebpf_map_definition.type != BPF_MAP_TYPE_PROG_ARRAY) {
+        return EBPF_INVALID_ARGUMENT;
+    }
+    ebpf_core_prog_array_map_t* prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, map);
+    _ebpf_prog_array_increment_user(prog_array);
+    return EBPF_SUCCESS;
+}
+
+void
+ebpf_prog_array_map_release_user_reference(_Inout_ ebpf_map_t* map)
+{
+    if (map->ebpf_map_definition.type != BPF_MAP_TYPE_PROG_ARRAY) {
+        return; // Ignore for non-prog array maps.
+    }
+    ebpf_core_prog_array_map_t* prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, map);
+    _ebpf_prog_array_decrement_user(prog_array);
+}
+
+_Must_inspect_result_ ebpf_result_t
+ebpf_prog_array_map_acquire_kernel_reference(_Inout_ ebpf_map_t* map)
+{
+    if (map->ebpf_map_definition.type != BPF_MAP_TYPE_PROG_ARRAY) {
+        return EBPF_INVALID_ARGUMENT;
+    }
+    ebpf_core_prog_array_map_t* prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, map);
+    _ebpf_prog_array_increment_kernel(prog_array);
+    return EBPF_SUCCESS;
+}
+
+void
+ebpf_prog_array_map_release_kernel_reference(_Inout_ ebpf_map_t* map)
+{
+    if (map->ebpf_map_definition.type != BPF_MAP_TYPE_PROG_ARRAY) {
+        return;
+    }
+    ebpf_core_prog_array_map_t* prog_array = EBPF_FROM_FIELD(ebpf_core_prog_array_map_t, object_map, map);
+    _ebpf_prog_array_decrement_kernel(prog_array);
 }
 
 _Must_inspect_result_ ebpf_result_t

@@ -3,6 +3,8 @@
 
 #define EBPF_FILE_ID EBPF_FILE_ID_HANDLE
 #include "ebpf_handle.h"
+#include "ebpf_maps.h"
+#include "ebpf_object.h"
 #include "ebpf_tracelog.h"
 
 typedef ebpf_base_object_t* ebpf_handle_entry_t;
@@ -86,7 +88,17 @@ ebpf_handle_close(ebpf_handle_t handle)
 
     state = ebpf_lock_lock(&_ebpf_handle_table_lock);
     if (((size_t)handle < EBPF_COUNT_OF(_ebpf_handle_table)) && _ebpf_handle_table[handle] != NULL) {
-        EBPF_OBJECT_RELEASE_REFERENCE_INDIRECT(_ebpf_handle_table[handle]);
+        ebpf_base_object_t* base_object = _ebpf_handle_table[handle];
+        // Cast base to core to inspect type field safely.
+        ebpf_core_object_t* core_object = (ebpf_core_object_t*)base_object;
+        if (core_object && core_object->type == EBPF_OBJECT_MAP) {
+            ebpf_map_t* map = (ebpf_map_t*)core_object;
+            const ebpf_map_definition_in_memory_t* map_definition = ebpf_map_get_definition(map);
+            if (map_definition && map_definition->type == BPF_MAP_TYPE_PROG_ARRAY) {
+                ebpf_prog_array_map_release_user_reference(map);
+            }
+        }
+        EBPF_OBJECT_RELEASE_REFERENCE_INDIRECT(base_object);
         _ebpf_handle_table[handle] = NULL;
         return_value = EBPF_SUCCESS;
     } else {
