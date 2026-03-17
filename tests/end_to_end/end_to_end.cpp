@@ -4354,3 +4354,266 @@ _test_custom_maps_invalid(ebpf_execution_type_t execution_type)
 }
 
 DECLARE_ALL_TEST_CASES("custom_maps_invalid", "[end_to_end][custom_maps][!mayfail]", _test_custom_maps_invalid);
+
+#if defined(_M_X64)
+static unsigned long
+_ebpf_compute_crc32(_In_reads_(length_in_bytes) const uint8_t* key, size_t length_in_bytes, uint32_t seed)
+{
+    // First process 8 bytes at a time.
+    uint32_t crc = seed;
+    uint8_t* start = (uint8_t*)key;
+    uint8_t* end = start + length_in_bytes;
+
+    while ((end - start) >= 8) {
+        crc = (uint32_t)_mm_crc32_u64(crc, *(uint64_t*)start);
+        start += 8;
+    }
+
+    // Process 4 bytes at a time.
+    while ((end - start) >= 4) {
+        crc = _mm_crc32_u32(crc, *(uint32_t*)start);
+        start += 4;
+    }
+
+    // Process remaining bytes.
+    while ((end - start) > 0) {
+        crc = _mm_crc32_u8(crc, *start);
+        start++;
+    }
+    return crc;
+}
+
+/**
+ * @brief Compute CRC32 over a key whose effective length is specified in bits.
+ * For the final partial byte (when length_in_bits is not byte-aligned), only
+ * the high-order bits are hashed, matching the comparison semantics in
+ * _ebpf_hash_table_compare_extracted_keys.
+ *
+ * @param[in] key Pointer to the key data.
+ * @param[in] length_in_bits Length of the key in bits.
+ * @param[in] seed Seed to randomize hash.
+ * @return CRC32 hash of the key.
+ */
+static unsigned long
+_ebpf_compute_crc32_bits(_In_reads_((length_in_bits + 7) / 8) const uint8_t* key, size_t length_in_bits, uint32_t seed)
+{
+    size_t full_bytes = length_in_bits / 8;
+    uint32_t remaining_bits = length_in_bits % 8;
+    uint32_t crc = _ebpf_compute_crc32(key, full_bytes, seed);
+    if (remaining_bits) {
+        // Mask off the low-order bits that are not part of the key,
+        // keeping only the high-order 'remaining_bits' of the final byte.
+        uint8_t masked = key[full_bytes] & (uint8_t)(0xFF << (8 - remaining_bits));
+        crc = _mm_crc32_u8(crc, masked);
+    }
+    return crc;
+}
+
+static inline unsigned long
+_ebpf_rol(uint32_t value, size_t count)
+{
+    return (value << count) | (value >> (32 - count));
+}
+
+static unsigned long
+_ebpf_murmur3_32(_In_reads_((length_in_bits + 7) / 8) const uint8_t* key, size_t length_in_bits, uint32_t seed)
+{
+    uint32_t c1 = 0xcc9e2d51;
+    uint32_t c2 = 0x1b873593;
+    uint32_t r1 = 15;
+    uint32_t r2 = 13;
+    uint32_t m = 5;
+    uint32_t n = 0xe6546b64;
+    uint32_t hash = seed;
+    uint32_t length_in_bytes = ((uint32_t)length_in_bits / 8);
+    uint32_t remaining_bits = length_in_bits % 8;
+
+    for (size_t index = 0; (length_in_bytes - index) > 3; index += 4) {
+        uint32_t k = *(uint32_t*)(key + index);
+        k *= c1;
+        k = _ebpf_rol(k, r1);
+        k *= c2;
+
+        hash ^= k;
+        hash = _ebpf_rol(hash, r2);
+        hash *= m;
+        hash += n;
+    }
+    unsigned long remainder = 0;
+    for (size_t index = length_in_bytes & (~3); index < length_in_bytes; index++) {
+        remainder <<= 8;
+        remainder |= key[index];
+    }
+    if (remaining_bits) {
+        uint8_t bits = key[length_in_bytes];
+        bits >>= (8 - remaining_bits);
+        remainder <<= 8;
+        remainder |= bits;
+    }
+
+    remainder *= c1;
+    remainder = _ebpf_rol(remainder, r1);
+    remainder *= c2;
+
+    hash ^= remainder;
+    hash ^= (uint32_t)length_in_bytes;
+    hash *= 0x85ebca6b;
+    hash ^= (hash >> r2);
+    hash *= 0xc2b2ae35;
+    hash ^= (hash >> 16);
+    return hash;
+}
+
+TEST_CASE("Hash function performance test", "[performance][hash]")
+{
+    const int iterations = 1000000;
+    const int buffer_size = 32;
+    uint8_t byte_aligned_buffer[buffer_size];
+    uint8_t non_byte_aligned_buffer[buffer_size];
+    uint32_t seed = 0x12345678;
+
+    // Initialize buffers with test data
+    for (int i = 0; i < buffer_size; i++) {
+        byte_aligned_buffer[i] = static_cast<uint8_t>(i);
+        non_byte_aligned_buffer[i] = static_cast<uint8_t>(i);
+    }
+
+    // Pin thread to core 0
+    HANDLE current_thread = ::GetCurrentThread();
+    DWORD_PTR affinity_mask = 1; // Core 0
+    DWORD_PTR previous_affinity = ::SetThreadAffinityMask(current_thread, affinity_mask);
+
+    // Test 1: Byte-aligned buffer
+    printf("\n=== BYTE-ALIGNED BUFFER TEST (32 bytes) ===\n");
+
+    // Test CRC32
+    auto start_crc32 = std::chrono::high_resolution_clock::now();
+    unsigned long crc_result = 0;
+    for (int i = 0; i < iterations; i++) {
+        crc_result = _ebpf_compute_crc32(byte_aligned_buffer, buffer_size, seed);
+    }
+    auto end_crc32 = std::chrono::high_resolution_clock::now();
+    auto duration_crc32 = std::chrono::duration_cast<std::chrono::nanoseconds>(end_crc32 - start_crc32);
+    printf(
+        "_ebpf_compute_crc32: %lld ns total, %lld ns/iteration (%d iterations, result: %lu)\n",
+        duration_crc32.count(),
+        duration_crc32.count() / iterations,
+        iterations,
+        crc_result);
+    printf("Sleeping 5 seconds to let CPU cool down...\n");
+    Sleep(5000);
+
+    // Test CRC32_bits (byte-aligned = 256 bits = 32*8 bits)
+    auto start_crc32_bits = std::chrono::high_resolution_clock::now();
+    unsigned long crc_bits_result = 0;
+    for (int i = 0; i < iterations; i++) {
+        crc_bits_result = _ebpf_compute_crc32_bits(byte_aligned_buffer, buffer_size * 8, seed);
+    }
+    auto end_crc32_bits = std::chrono::high_resolution_clock::now();
+    auto duration_crc32_bits = std::chrono::duration_cast<std::chrono::nanoseconds>(end_crc32_bits - start_crc32_bits);
+    printf(
+        "_ebpf_compute_crc32_bits: %lld ns total, %lld ns/iteration (%d iterations, result: %lu)\n",
+        duration_crc32_bits.count(),
+        duration_crc32_bits.count() / iterations,
+        iterations,
+        crc_bits_result);
+    printf("Sleeping 5 seconds to let CPU cool down...\n");
+    Sleep(5000);
+
+    // Test Murmur3_32
+    auto start_murmur3 = std::chrono::high_resolution_clock::now();
+    unsigned long murmur_result = 0;
+    for (int i = 0; i < iterations; i++) {
+        murmur_result = _ebpf_murmur3_32(byte_aligned_buffer, buffer_size * 8, seed);
+    }
+    auto end_murmur3 = std::chrono::high_resolution_clock::now();
+    auto duration_murmur3 = std::chrono::duration_cast<std::chrono::nanoseconds>(end_murmur3 - start_murmur3);
+    printf(
+        "_ebpf_murmur3_32: %lld ns total, %lld ns/iteration (%d iterations, result: %lu)\n",
+        duration_murmur3.count(),
+        duration_murmur3.count() / iterations,
+        iterations,
+        murmur_result);
+    printf("Sleeping 5 seconds to let CPU cool down...\n");
+    Sleep(5000);
+
+    // Test 2: Non-byte-aligned buffer (29 bytes = 232 bits, using 233 bits to test non-aligned)
+    printf("\n=== NON-BYTE-ALIGNED BUFFER TEST (29 bytes + 1 bit = 233 bits) ===\n");
+    size_t non_byte_aligned_bits = 29 * 8 + 1; // 233 bits
+
+    // Test CRC32_bits with non-byte-aligned length
+    auto start_crc32_bits_nba = std::chrono::high_resolution_clock::now();
+    unsigned long crc_bits_nba_result = 0;
+    for (int i = 0; i < iterations; i++) {
+        crc_bits_nba_result = _ebpf_compute_crc32_bits(non_byte_aligned_buffer, non_byte_aligned_bits, seed);
+    }
+    auto end_crc32_bits_nba = std::chrono::high_resolution_clock::now();
+    auto duration_crc32_bits_nba =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_crc32_bits_nba - start_crc32_bits_nba);
+    printf(
+        "_ebpf_compute_crc32_bits (233 bits): %lld ns total, %lld ns/iteration (%d iterations, result: %lu)\n",
+        duration_crc32_bits_nba.count(),
+        duration_crc32_bits_nba.count() / iterations,
+        iterations,
+        crc_bits_nba_result);
+    printf("Sleeping 5 seconds to let CPU cool down...\n");
+    Sleep(5000);
+
+    // Test Murmur3_32 with non-byte-aligned length
+    auto start_murmur3_nba = std::chrono::high_resolution_clock::now();
+    unsigned long murmur_nba_result = 0;
+    for (int i = 0; i < iterations; i++) {
+        murmur_nba_result = _ebpf_murmur3_32(non_byte_aligned_buffer, non_byte_aligned_bits, seed);
+    }
+    auto end_murmur3_nba = std::chrono::high_resolution_clock::now();
+    auto duration_murmur3_nba =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end_murmur3_nba - start_murmur3_nba);
+    printf(
+        "_ebpf_murmur3_32 (233 bits): %lld ns total, %lld ns/iteration (%d iterations, result: %lu)\n",
+        duration_murmur3_nba.count(),
+        duration_murmur3_nba.count() / iterations,
+        iterations,
+        murmur_nba_result);
+    printf("Sleeping 5 seconds to let CPU cool down...\n");
+    Sleep(5000);
+
+    // Test 3: Varying bit offsets beyond whole bytes.
+    // Tests buffer_size bytes + 1..7 extra bits to measure impact of partial-byte handling.
+    printf("\n=== VARYING BIT OFFSET TEST (%d bytes + 1..7 bits) ===\n", buffer_size);
+    for (int extra_bits = 1; extra_bits <= 7; extra_bits++) {
+        size_t total_bits = static_cast<size_t>(buffer_size) * 8 + extra_bits;
+
+        auto start_crc = std::chrono::high_resolution_clock::now();
+        unsigned long crc_res = 0;
+        for (int i = 0; i < iterations; i++) {
+            crc_res = _ebpf_compute_crc32_bits(byte_aligned_buffer, total_bits, seed);
+        }
+        auto end_crc = std::chrono::high_resolution_clock::now();
+        auto dur_crc = std::chrono::duration_cast<std::chrono::nanoseconds>(end_crc - start_crc);
+
+        auto start_mm = std::chrono::high_resolution_clock::now();
+        unsigned long mm_res = 0;
+        for (int i = 0; i < iterations; i++) {
+            mm_res = _ebpf_murmur3_32(byte_aligned_buffer, total_bits, seed);
+        }
+        auto end_mm = std::chrono::high_resolution_clock::now();
+        auto dur_mm = std::chrono::duration_cast<std::chrono::nanoseconds>(end_mm - start_mm);
+
+        printf(
+            "%zu bits (+%d): crc32_bits %lld ns/iter (result: %lu), murmur3 %lld ns/iter (result: %lu)\n",
+            total_bits,
+            extra_bits,
+            dur_crc.count() / iterations,
+            crc_res,
+            dur_mm.count() / iterations,
+            mm_res);
+
+        Sleep(5000);
+    }
+
+    // Restore previous thread affinity
+    ::SetThreadAffinityMask(current_thread, previous_affinity);
+
+    printf("\n=== TEST COMPLETE ===\n");
+}
+#endif
