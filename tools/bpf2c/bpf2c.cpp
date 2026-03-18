@@ -331,6 +331,7 @@ main(int argc, char** argv)
             if (result != EBPF_SUCCESS) {
                 throw std::runtime_error(std::string("Failed to get program information"));
             }
+
             generator.parse(
                 program,
                 program_info,
