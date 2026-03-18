@@ -364,13 +364,24 @@ bpf_code_generator::set_program_hash_info(
 }
 
 void
+bpf_code_generator::set_map_annotations(_In_reads_(count) const ebpf_verifier_map_info_t* annotations, size_t count)
+{
+    _map_annotations.clear();
+    if (annotations != nullptr) {
+        for (size_t i = 0; i < count; i++) {
+            _map_annotations[annotations[i].instruction_offset] = annotations[i];
+        }
+    }
+}
+
+void
 bpf_code_generator::generate(const bpf_code_generator::unsafe_string& program_name)
 {
     bpf_code_generator_program& program = programs[program_name];
 
     program.generate_labels();
     program.build_function_table();
-    program.encode_instructions(map_definitions, global_variable_sections);
+    program.encode_instructions(map_definitions, global_variable_sections, _map_annotations);
 }
 
 std::vector<int32_t>
@@ -1077,36 +1088,17 @@ bpf_code_generator::bpf_code_generator_program::build_function_table()
 void
 bpf_code_generator::bpf_code_generator_program::encode_instructions(
     std::map<unsafe_string, map_info_t>& map_definitions,
-    std::map<unsafe_string, global_variable_section_t>& global_variable_sections)
+    std::map<unsafe_string, global_variable_section_t>& global_variable_sections,
+    const std::unordered_map<uint32_t, ebpf_verifier_map_info_t>& map_annotations)
 {
     std::vector<output_instruction_t>& program_output = output_instructions;
     auto effective_program_name = !program_name.empty() ? program_name : elf_section_name;
     auto helper_array_prefix = "runtime_context->helper_data[{}]";
 
-    // Forward register tracking: track which map (if any) is currently in r1.
-    // This is used to inline array map lookups. The tracker is invalidated
-    // at jump targets, branches, or any instruction that modifies r1.
-    const map_info_t* r1_map = nullptr;
-
     // Encode instructions.
     for (size_t i = 0; i < program_output.size(); i++) {
         auto& output = program_output[i];
         auto& inst = output.instruction;
-
-        // Invalidate r1 map tracking at jump targets — a different control
-        // flow path may have loaded a different map into r1.
-        if (output.jump_target) {
-            r1_map = nullptr;
-        }
-
-        // Invalidate r1 map tracking if this instruction writes to r1
-        // (except for LDDW MAP_FD to r1, which is handled below).
-        if (inst.dst == 1) {
-            bool is_map_fd_load = (inst.opcode == INST_OP_LDDW_IMM && inst.src == INST_LD_MODE_MAP_FD);
-            if (!is_map_fd_load) {
-                r1_map = nullptr;
-            }
-        }
 
         switch (inst.opcode & INST_CLS_MASK) {
         case INST_CLS_ALU:
@@ -1381,11 +1373,6 @@ bpf_code_generator::bpf_code_generator_program::encode_instructions(
                     std::format("runtime_context->map_data[{}].address", std::to_string(map_definition->second.index));
                 output.lines.push_back(std::format("{} = POINTER({});", destination, source));
                 referenced_map_indices.insert(map_definitions[output.relocation].index);
-
-                // Track which map was loaded into r1 for inline optimization.
-                if (inst.dst == 1) {
-                    r1_map = &map_definition->second;
-                }
             } else if (inst.src == INST_LD_MODE_MAP_VALUE) {
                 std::string source;
                 uint64_t imm = static_cast<uint32_t>(program_output[i].instruction.imm);
@@ -1608,33 +1595,37 @@ bpf_code_generator::bpf_code_generator_program::encode_instructions(
 
                 // For BPF_FUNC_map_lookup_elem on BPF_MAP_TYPE_ARRAY maps, emit
                 // an inline array lookup instead of an indirect helper call.
-                // r1_map is set by the LDDW handler when it loads a map into r1,
-                // and invalidated at jump targets or when r1 is overwritten.
+                // Uses verifier-provided annotations that prove which map r1
+                // holds at this call site (via abstract domain singleton check).
                 bool inlined = false;
-                if (helper_id == BPF_FUNC_map_lookup_elem && r1_map != nullptr &&
-                    r1_map->definition.type == BPF_MAP_TYPE_ARRAY) {
-                    // Emit inline array map lookup using compile-time constants.
-                    output.lines.push_back("{");
-                    output.lines.push_back(
-                        INDENT "uint32_t _array_key = *(uint32_t*)(uintptr_t)" + get_register_name(2) + ";");
-                    output.lines.push_back(
-                        std::format(INDENT "if (_array_key < {}) {{", r1_map->definition.max_entries));
-                    output.lines.push_back(std::format(
-                        INDENT INDENT "{} = (uint64_t)(uintptr_t)"
-                                      "(runtime_context->map_data[{}].array_data + "
-                                      "(uint64_t)_array_key * {});",
-                        get_register_name(0),
-                        r1_map->index,
-                        r1_map->definition.value_size));
-                    output.lines.push_back(INDENT "} else {");
-                    output.lines.push_back(INDENT INDENT + get_register_name(0) + " = 0;");
-                    output.lines.push_back(INDENT "}");
-                    output.lines.push_back("}");
-                    inlined = true;
+                if (helper_id == BPF_FUNC_map_lookup_elem) {
+                    auto ann_it = map_annotations.find(output.instruction_offset);
+                    if (ann_it != map_annotations.end() && ann_it->second.map_name != nullptr &&
+                        ann_it->second.map_type == BPF_MAP_TYPE_ARRAY) {
+                        // Look up the map in bpf2c's own map_definitions by name
+                        // to get the correct runtime map_data index.
+                        auto map_it = map_definitions.find(ann_it->second.map_name);
+                        if (map_it != map_definitions.end()) {
+                            const auto& ann = ann_it->second;
+                            output.lines.push_back("{");
+                            output.lines.push_back(
+                                INDENT "uint32_t _array_key = *(uint32_t*)(uintptr_t)" + get_register_name(2) + ";");
+                            output.lines.push_back(std::format(INDENT "if (_array_key < {}) {{", ann.max_entries));
+                            output.lines.push_back(std::format(
+                                INDENT INDENT "{} = (uint64_t)(uintptr_t)"
+                                              "(runtime_context->map_data[{}].array_data + "
+                                              "(uint64_t)_array_key * {});",
+                                get_register_name(0),
+                                map_it->second.index,
+                                ann.value_size));
+                            output.lines.push_back(INDENT "} else {");
+                            output.lines.push_back(INDENT INDENT + get_register_name(0) + " = 0;");
+                            output.lines.push_back(INDENT "}");
+                            output.lines.push_back("}");
+                            inlined = true;
+                        }
+                    }
                 }
-
-                // Calls clobber r0-r5, so invalidate r1 map tracking.
-                r1_map = nullptr;
 
                 if (!inlined) {
                     output.lines.push_back(
