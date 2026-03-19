@@ -3985,6 +3985,12 @@ ebpf_map_next_key(
     return map->properties->next_key_and_value(map, previous_key, next_key, NULL);
 }
 
+const cxplat_utf8_string_t*
+ebpf_map_get_name(_In_ const ebpf_map_t* map)
+{
+    return &map->name;
+}
+
 _Must_inspect_result_ ebpf_result_t
 ebpf_map_get_info(
     _In_ const ebpf_map_t* map, _Out_writes_to_(*info_size, *info_size) uint8_t* buffer, _Inout_ uint16_t* info_size)
