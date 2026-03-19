@@ -5639,3 +5639,27 @@ ebpf_perf_buffer_get_wait_handle(_In_ const struct perf_buffer* pb) EBPF_NO_EXCE
 
     return pb->wait_handle;
 }
+
+_Must_inspect_result_ ebpf_result_t
+ebpf_latency_tracking_enable(uint32_t mode) NO_EXCEPT_TRY
+{
+    EBPF_LOG_ENTRY();
+    ebpf_result_t result = EBPF_SUCCESS;
+    ebpf_operation_latency_enable_request_t request{
+        sizeof(request), ebpf_operation_id_t::EBPF_OPERATION_LATENCY_ENABLE, mode};
+    result = win32_error_code_to_ebpf_result(invoke_ioctl(request));
+    EBPF_RETURN_RESULT(result);
+}
+CATCH_NO_MEMORY_EBPF_RESULT
+
+_Must_inspect_result_ ebpf_result_t
+ebpf_latency_tracking_disable() NO_EXCEPT_TRY
+{
+    EBPF_LOG_ENTRY();
+    ebpf_result_t result = EBPF_SUCCESS;
+    ebpf_operation_latency_disable_request_t request{
+        sizeof(request), ebpf_operation_id_t::EBPF_OPERATION_LATENCY_DISABLE};
+    result = win32_error_code_to_ebpf_result(invoke_ioctl(request));
+    EBPF_RETURN_RESULT(result);
+}
+CATCH_NO_MEMORY_EBPF_RESULT

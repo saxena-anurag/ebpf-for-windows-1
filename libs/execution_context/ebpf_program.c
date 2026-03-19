@@ -10,6 +10,7 @@
 #include "ebpf_error.h"
 #include "ebpf_extension_uuids.h"
 #include "ebpf_handle.h"
+#include "ebpf_latency.h"
 #include "ebpf_link.h"
 #include "ebpf_native.h"
 #include "ebpf_object.h"
@@ -1545,6 +1546,14 @@ ebpf_program_invoke(
     // High volume call - Skip entry/exit logging.
     const ebpf_program_t* current_program = program;
 
+    // Latency tracking: capture start time if enabled.
+    uint64_t latency_start = 0;
+    long latency_mode = ebpf_latency_get_mode();
+    if (latency_mode > 0 &&
+        TraceLoggingProviderEnabled(ebpf_tracelog_provider, WINEVENT_LEVEL_VERBOSE, EBPF_TRACELOG_KEYWORD_LATENCY)) {
+        latency_start = cxplat_query_time_since_boot_precise(false);
+    }
+
     ebpf_assert(context != NULL);
 
     // Set runtime state in context header.
@@ -1599,6 +1608,13 @@ ebpf_program_invoke(
             execution_state->tail_call_state.next_program = NULL;
         }
     }
+
+    // Latency tracking: emit ETW event if tracking was active.
+    if (latency_start != 0) {
+        uint64_t latency_end = cxplat_query_time_since_boot_precise(false);
+        ebpf_latency_emit_program_event(program->object.id, latency_start, latency_end);
+    }
+
     return EBPF_SUCCESS;
 }
 
