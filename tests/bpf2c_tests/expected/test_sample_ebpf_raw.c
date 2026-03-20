@@ -140,11 +140,7 @@ test_program_entry(void* context, const program_runtime_context_t* runtime_conte
 #line 39 "sample/undocked/test_sample_ebpf.c"
     r0 = runtime_context->helper_data[0].address(r1, r2, r3, r4, r5, context);
 #line 39 "sample/undocked/test_sample_ebpf.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 39 "sample/undocked/test_sample_ebpf.c"
-        return 0;
-#line 39 "sample/undocked/test_sample_ebpf.c"
-    }
+    PreFetchCacheLine(PF_TEMPORAL_LEVEL_1, runtime_context->map_data[0].address);
     // EBPF_OP_MOV64_REG pc=9 dst=r8 src=r0 offset=0 imm=0
 #line 39 "sample/undocked/test_sample_ebpf.c"
     r8 = r0;
@@ -159,11 +155,19 @@ test_program_entry(void* context, const program_runtime_context_t* runtime_conte
     r1 = POINTER(runtime_context->map_data[0].address);
     // EBPF_OP_CALL pc=14 dst=r0 src=r0 offset=0 imm=1
 #line 40 "sample/undocked/test_sample_ebpf.c"
-    r0 = runtime_context->helper_data[0].address(r1, r2, r3, r4, r5, context);
+    {
 #line 40 "sample/undocked/test_sample_ebpf.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
+        uint32_t _array_key = *(uint32_t*)(uintptr_t)r2;
 #line 40 "sample/undocked/test_sample_ebpf.c"
-        return 0;
+        if (_array_key < 2) {
+#line 40 "sample/undocked/test_sample_ebpf.c"
+            r0 = (uint64_t)(uintptr_t)(runtime_context->map_data[0].array_data + (uint64_t)_array_key * 32);
+#line 40 "sample/undocked/test_sample_ebpf.c"
+        } else {
+#line 40 "sample/undocked/test_sample_ebpf.c"
+            r0 = 0;
+#line 40 "sample/undocked/test_sample_ebpf.c"
+        }
 #line 40 "sample/undocked/test_sample_ebpf.c"
     }
     // EBPF_OP_MOV64_REG pc=15 dst=r7 src=r0 offset=0 imm=0
@@ -201,12 +205,6 @@ test_program_entry(void* context, const program_runtime_context_t* runtime_conte
     // EBPF_OP_CALL pc=23 dst=r0 src=r0 offset=0 imm=65537
 #line 46 "sample/undocked/test_sample_ebpf.c"
     r0 = runtime_context->helper_data[1].address(r1, r2, r3, r4, r5, context);
-#line 46 "sample/undocked/test_sample_ebpf.c"
-    if ((runtime_context->helper_data[1].tail_call) && (r0 == 0)) {
-#line 46 "sample/undocked/test_sample_ebpf.c"
-        return 0;
-#line 46 "sample/undocked/test_sample_ebpf.c"
-    }
     // EBPF_OP_JEQ_IMM pc=24 dst=r7 src=r0 offset=9 imm=0
 #line 48 "sample/undocked/test_sample_ebpf.c"
     if (r7 == IMMEDIATE(0)) {
@@ -235,12 +233,6 @@ test_program_entry(void* context, const program_runtime_context_t* runtime_conte
     // EBPF_OP_CALL pc=31 dst=r0 src=r0 offset=0 imm=65538
 #line 49 "sample/undocked/test_sample_ebpf.c"
     r0 = runtime_context->helper_data[2].address(r1, r2, r3, r4, r5, context);
-#line 49 "sample/undocked/test_sample_ebpf.c"
-    if ((runtime_context->helper_data[2].tail_call) && (r0 == 0)) {
-#line 49 "sample/undocked/test_sample_ebpf.c"
-        return 0;
-#line 49 "sample/undocked/test_sample_ebpf.c"
-    }
     // EBPF_OP_MOV64_IMM pc=32 dst=r1 src=r0 offset=0 imm=0
 #line 49 "sample/undocked/test_sample_ebpf.c"
     r1 = IMMEDIATE(0);
@@ -258,12 +250,6 @@ label_1:
     // EBPF_OP_CALL pc=35 dst=r0 src=r0 offset=0 imm=65536
 #line 58 "sample/undocked/test_sample_ebpf.c"
     r0 = runtime_context->helper_data[3].address(r1, r2, r3, r4, r5, context);
-#line 58 "sample/undocked/test_sample_ebpf.c"
-    if ((runtime_context->helper_data[3].tail_call) && (r0 == 0)) {
-#line 58 "sample/undocked/test_sample_ebpf.c"
-        return 0;
-#line 58 "sample/undocked/test_sample_ebpf.c"
-    }
     // EBPF_OP_MOV64_IMM pc=36 dst=r1 src=r0 offset=0 imm=0
 #line 58 "sample/undocked/test_sample_ebpf.c"
     r1 = IMMEDIATE(0);

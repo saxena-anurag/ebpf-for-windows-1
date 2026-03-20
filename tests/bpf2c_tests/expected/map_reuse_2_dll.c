@@ -189,12 +189,6 @@ lookup_update(void* context, const program_runtime_context_t* runtime_context)
     // EBPF_OP_CALL pc=6 dst=r0 src=r0 offset=0 imm=1
 #line 55 "sample/undocked/map_reuse_2.c"
     r0 = runtime_context->helper_data[0].address(r1, r2, r3, r4, r5, context);
-#line 55 "sample/undocked/map_reuse_2.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 55 "sample/undocked/map_reuse_2.c"
-        return 0;
-#line 55 "sample/undocked/map_reuse_2.c"
-    }
     // EBPF_OP_JEQ_IMM pc=7 dst=r0 src=r0 offset=20 imm=0
 #line 56 "sample/undocked/map_reuse_2.c"
     if (r0 == IMMEDIATE(0)) {
@@ -216,11 +210,19 @@ lookup_update(void* context, const program_runtime_context_t* runtime_context)
     r1 = r0;
     // EBPF_OP_CALL pc=12 dst=r0 src=r0 offset=0 imm=1
 #line 58 "sample/undocked/map_reuse_2.c"
-    r0 = runtime_context->helper_data[0].address(r1, r2, r3, r4, r5, context);
+    {
 #line 58 "sample/undocked/map_reuse_2.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
+        uint32_t _array_key = *(uint32_t*)(uintptr_t)r2;
 #line 58 "sample/undocked/map_reuse_2.c"
-        return 0;
+        if (_array_key < 1) {
+#line 58 "sample/undocked/map_reuse_2.c"
+            r0 = (uint64_t)(uintptr_t)(runtime_context->map_data[2].array_data + (uint64_t)_array_key * 4);
+#line 58 "sample/undocked/map_reuse_2.c"
+        } else {
+#line 58 "sample/undocked/map_reuse_2.c"
+            r0 = 0;
+#line 58 "sample/undocked/map_reuse_2.c"
+        }
 #line 58 "sample/undocked/map_reuse_2.c"
     }
     // EBPF_OP_JNE_IMM pc=13 dst=r0 src=r0 offset=1 imm=0
@@ -267,12 +269,6 @@ label_1:
     // EBPF_OP_CALL pc=26 dst=r0 src=r0 offset=0 imm=2
 #line 63 "sample/undocked/map_reuse_2.c"
     r0 = runtime_context->helper_data[1].address(r1, r2, r3, r4, r5, context);
-#line 63 "sample/undocked/map_reuse_2.c"
-    if ((runtime_context->helper_data[1].tail_call) && (r0 == 0)) {
-#line 63 "sample/undocked/map_reuse_2.c"
-        return 0;
-#line 63 "sample/undocked/map_reuse_2.c"
-    }
     // EBPF_OP_LDXW pc=27 dst=r6 src=r6 offset=0 imm=0
 #line 65 "sample/undocked/map_reuse_2.c"
     READ_ONCE_32(r6, r6, OFFSET(0));
