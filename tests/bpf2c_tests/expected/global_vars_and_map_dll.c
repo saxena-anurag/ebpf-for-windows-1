@@ -182,12 +182,6 @@ GlobalVariableAndMapTest(void* context, const program_runtime_context_t* runtime
     // EBPF_OP_CALL pc=6 dst=r0 src=r0 offset=0 imm=1
 #line 44 "sample/undocked/global_vars_and_map.c"
     r0 = runtime_context->helper_data[0].address(r1, r2, r3, r4, r5, context);
-#line 44 "sample/undocked/global_vars_and_map.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 44 "sample/undocked/global_vars_and_map.c"
-        return 0;
-#line 44 "sample/undocked/global_vars_and_map.c"
-    }
     // EBPF_OP_MOV64_IMM pc=7 dst=r1 src=r0 offset=0 imm=1
 #line 44 "sample/undocked/global_vars_and_map.c"
     r1 = IMMEDIATE(1);
@@ -213,12 +207,6 @@ GlobalVariableAndMapTest(void* context, const program_runtime_context_t* runtime
     // EBPF_OP_CALL pc=14 dst=r0 src=r0 offset=0 imm=22
 #line 50 "sample/undocked/global_vars_and_map.c"
     r0 = runtime_context->helper_data[1].address(r1, r2, r3, r4, r5, context);
-#line 50 "sample/undocked/global_vars_and_map.c"
-    if ((runtime_context->helper_data[1].tail_call) && (r0 == 0)) {
-#line 50 "sample/undocked/global_vars_and_map.c"
-        return 0;
-#line 50 "sample/undocked/global_vars_and_map.c"
-    }
     // EBPF_OP_MOV64_IMM pc=15 dst=r1 src=r0 offset=0 imm=0
 #line 50 "sample/undocked/global_vars_and_map.c"
     r1 = IMMEDIATE(0);
