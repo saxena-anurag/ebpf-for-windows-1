@@ -149,12 +149,6 @@ DropPacket(void* context, const program_runtime_context_t* runtime_context)
         }
 #line 57 "sample/droppacket.c"
     }
-#line 57 "sample/droppacket.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 57 "sample/droppacket.c"
-        return 0;
-#line 57 "sample/droppacket.c"
-    }
     // EBPF_OP_MOV64_REG pc=8 dst=r1 src=r0 offset=0 imm=0
 #line 57 "sample/droppacket.c"
     r1 = r0;
@@ -293,12 +287,6 @@ label_1:
         }
 #line 81 "sample/droppacket.c"
     }
-#line 81 "sample/droppacket.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 81 "sample/droppacket.c"
-        return 0;
-#line 81 "sample/droppacket.c"
-    }
     // EBPF_OP_MOV64_REG pc=40 dst=r1 src=r0 offset=0 imm=0
 #line 81 "sample/droppacket.c"
     r1 = r0;
@@ -361,7 +349,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 1;
-    version->minor = 1;
+    version->minor = 2;
     version->revision = 0;
 }
 

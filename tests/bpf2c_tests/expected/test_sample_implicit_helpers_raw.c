@@ -204,20 +204,6 @@ test_program_entry(void* context, const program_runtime_context_t* runtime_conte
         }
 #line 48 "sample/undocked/test_sample_implicit_helpers.c"
     }
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-        uint32_t _array_key = *(uint32_t*)(uintptr_t)r2;
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-        if (_array_key < 2) {
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-            r0 = (uint64_t)(uintptr_t)(runtime_context->map_data[0].array_data + (uint64_t)_array_key * 32);
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-        } else {
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-            r0 = 0;
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-        }
-#line 48 "sample/undocked/test_sample_implicit_helpers.c"
-    }
     // EBPF_OP_MOV64_REG pc=15 dst=r7 src=r0 offset=0 imm=0
 #line 48 "sample/undocked/test_sample_implicit_helpers.c"
     r7 = r0;

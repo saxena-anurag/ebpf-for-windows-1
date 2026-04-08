@@ -280,12 +280,6 @@ divide_by_zero(void* context, const program_runtime_context_t* runtime_context)
         }
 #line 35 "sample/undocked/divide_by_zero.c"
     }
-#line 35 "sample/undocked/divide_by_zero.c"
-    if ((runtime_context->helper_data[0].tail_call) && (r0 == 0)) {
-#line 35 "sample/undocked/divide_by_zero.c"
-        return 0;
-#line 35 "sample/undocked/divide_by_zero.c"
-    }
     // EBPF_OP_JEQ_IMM pc=7 dst=r0 src=r0 offset=3 imm=0
 #line 36 "sample/undocked/divide_by_zero.c"
     if (r0 == IMMEDIATE(0)) {
@@ -345,7 +339,7 @@ static void
 _get_version(_Out_ bpf2c_version_t* version)
 {
     version->major = 1;
-    version->minor = 1;
+    version->minor = 2;
     version->revision = 0;
 }
 
