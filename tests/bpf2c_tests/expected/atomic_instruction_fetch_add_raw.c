@@ -121,6 +121,20 @@ func(void* context, const program_runtime_context_t* runtime_context)
         }
 #line 28 "sample/undocked/atomic_instruction_fetch_add.c"
     }
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+        uint32_t _array_key = *(uint32_t*)(uintptr_t)r2;
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+        if (_array_key < 1) {
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+            r0 = (uint64_t)(uintptr_t)(runtime_context->map_data[0].array_data + (uint64_t)_array_key * 8);
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+        } else {
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+            r0 = 0;
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+        }
+#line 28 "sample/undocked/atomic_instruction_fetch_add.c"
+    }
     // EBPF_OP_JEQ_IMM pc=7 dst=r0 src=r0 offset=2 imm=0
 #line 29 "sample/undocked/atomic_instruction_fetch_add.c"
     if (r0 == IMMEDIATE(0)) {
