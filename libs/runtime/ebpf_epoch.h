@@ -10,6 +10,7 @@ extern "C"
 {
 #endif
 
+    typedef struct _ebpf_memory_manager ebpf_memory_manager_t;
     typedef struct _ebpf_epoch_work_item ebpf_epoch_work_item_t;
     typedef struct _ebpf_epoch_state
     {
@@ -134,6 +135,29 @@ extern "C"
      */
     bool
     ebpf_epoch_is_free_list_empty(uint32_t cpu_id);
+
+    /**
+     * @brief Allocate a block from a memory manager, under epoch control.
+     * The block is obtained from the memory manager and wrapped with an
+     * epoch-managed allocation header so that deferred reclamation works.
+     *
+     * @param[in,out] manager The memory manager to allocate from.
+     * @returns Pointer to usable memory, or NULL if allocation fails.
+     */
+    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_allocate_from_manager(
+        _Inout_ ebpf_memory_manager_t* manager);
+
+    /**
+     * @brief Free a block back to a memory manager, under epoch control (deferred).
+     * The block will be returned to the memory manager only after the current
+     * epoch has been released.
+     *
+     * @param[in,out] manager The memory manager that owns the block.
+     * @param[in] block Pointer to the block to free (as returned by
+     *                   ebpf_epoch_allocate_from_manager).
+     */
+    void
+    ebpf_epoch_free_to_manager(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block);
 
 #ifdef __cplusplus
 }

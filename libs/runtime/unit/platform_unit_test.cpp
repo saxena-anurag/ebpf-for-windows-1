@@ -9,6 +9,7 @@
 #include "ebpf_bitmap.h"
 #include "ebpf_epoch.h"
 #include "ebpf_hash_table.h"
+#include "ebpf_memory.h"
 #include "ebpf_nethooks.h"
 #include "ebpf_pinning_table.h"
 #include "ebpf_platform.h"
@@ -2715,3 +2716,759 @@ TEST_CASE("hash_of_file", "[platform]")
     // Clean up the test file.
     std::remove(file_name);
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Memory Manager Unit Tests
+// ──────────────────────────────────────────────────────────────────────
+
+TEST_CASE("memory_manager_single_cpu_alloc_free", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 100;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    // Allocate all N blocks.
+    std::vector<void*> blocks(N, nullptr);
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+
+    // Verify all pointers are unique.
+    std::set<void*> unique_ptrs(blocks.begin(), blocks.end());
+    REQUIRE(unique_ptrs.size() == N);
+
+    // N+1 allocation should return NULL.
+    REQUIRE(ebpf_memory_manager_allocate(mgr) == nullptr);
+
+    // Free all N blocks.
+    for (uint32_t i = 0; i < N; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    // Allocate N blocks again – should all succeed (recycled).
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+
+    // Free all again.
+    for (uint32_t i = 0; i < N; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_cross_cpu_free", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    if (ebpf_get_cpu_count() < 2) {
+        // Skip test on single-CPU systems.
+        return;
+    }
+
+    const uint32_t N = 100;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+
+    // Allocate 2 blocks on CPU 0.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+    void* block_a = ebpf_memory_manager_allocate(mgr);
+    void* block_b = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block_a != nullptr);
+    REQUIRE(block_b != nullptr);
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Free both blocks on CPU 1.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(1, &old_affinity) == EBPF_SUCCESS);
+    ebpf_memory_manager_free(mgr, block_a);
+    ebpf_memory_manager_free(mgr, block_b);
+
+    // Allocate 2 blocks on CPU 1 – should get them back.
+    void* block_c = ebpf_memory_manager_allocate(mgr);
+    void* block_d = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block_c != nullptr);
+    REQUIRE(block_d != nullptr);
+    ebpf_memory_manager_free(mgr, block_c);
+    ebpf_memory_manager_free(mgr, block_d);
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_alloc_alloc_free_loop", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 100;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    std::vector<void*> outstanding;
+    const uint8_t test_pattern = 0xAB;
+
+    for (int iter = 0; iter < 1000; iter++) {
+        void* block_a = ebpf_memory_manager_allocate(mgr);
+        if (block_a == nullptr) {
+            // All blocks in use, free one.
+            if (!outstanding.empty()) {
+                ebpf_memory_manager_free(mgr, outstanding.back());
+                outstanding.pop_back();
+            }
+            continue;
+        }
+        outstanding.push_back(block_a);
+
+        void* block_b = ebpf_memory_manager_allocate(mgr);
+        if (block_b == nullptr) {
+            continue;
+        }
+        outstanding.push_back(block_b);
+
+        // Write pattern to block_b.
+        memset(block_b, test_pattern, S);
+
+        // Free block_a.
+        ebpf_memory_manager_free(mgr, block_a);
+        outstanding.erase(std::find(outstanding.begin(), outstanding.end(), block_a));
+
+        // Verify block_b is still valid.
+        uint8_t* bytes = (uint8_t*)block_b;
+        for (size_t j = 0; j < S; j++) {
+            REQUIRE(bytes[j] == test_pattern);
+        }
+    }
+
+    // Free all remaining.
+    for (auto* ptr : outstanding) {
+        ebpf_memory_manager_free(mgr, ptr);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_parallel_alloc_different_cpus", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    uint32_t cpu_count = ebpf_get_cpu_count();
+    if (cpu_count < 2) {
+        return;
+    }
+    // Use at most 4 CPUs for this test.
+    uint32_t thread_count = (cpu_count > 4) ? 4 : cpu_count;
+
+    const uint32_t N = 800;
+    const size_t S = 64;
+    const uint32_t allocs_per_thread = 100;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    std::vector<std::vector<void*>> per_thread_blocks(thread_count);
+    std::vector<int> per_thread_success(thread_count, 1);
+    std::atomic<uint32_t> ready_count{0};
+    std::vector<std::thread> threads;
+
+    for (uint32_t i = 0; i < thread_count; i++) {
+        threads.emplace_back([&, i]() {
+            GROUP_AFFINITY old_affinity;
+            ebpf_assert_success(ebpf_set_current_thread_cpu_affinity(i, &old_affinity));
+
+            ready_count++;
+            while (ready_count < thread_count) {
+                std::this_thread::yield();
+            }
+
+            per_thread_blocks[i].resize(allocs_per_thread);
+            for (uint32_t j = 0; j < allocs_per_thread; j++) {
+                per_thread_blocks[i][j] = ebpf_memory_manager_allocate(mgr);
+                if (per_thread_blocks[i][j] == nullptr) {
+                    per_thread_success[i] = 0;
+                }
+            }
+
+            ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+        });
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    // Verify all threads succeeded.
+    for (uint32_t i = 0; i < thread_count; i++) {
+        REQUIRE(per_thread_success[i]);
+    }
+
+    // Verify no duplicate pointers across threads.
+    std::set<void*> all_ptrs;
+    for (uint32_t i = 0; i < thread_count; i++) {
+        for (auto* ptr : per_thread_blocks[i]) {
+            REQUIRE(all_ptrs.insert(ptr).second);
+        }
+    }
+    REQUIRE(all_ptrs.size() == (size_t)thread_count * allocs_per_thread);
+
+    // Free all blocks from each thread's CPU.
+    threads.clear();
+    for (uint32_t i = 0; i < thread_count; i++) {
+        threads.emplace_back([&, i]() {
+            GROUP_AFFINITY old_affinity;
+            ebpf_assert_success(ebpf_set_current_thread_cpu_affinity(i, &old_affinity));
+            for (auto* ptr : per_thread_blocks[i]) {
+                ebpf_memory_manager_free(mgr, ptr);
+            }
+            ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+        });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_parallel_alloc_free_stress", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    uint32_t cpu_count = ebpf_get_cpu_count();
+    uint32_t thread_count = (cpu_count > 4) ? 4 : cpu_count;
+
+    const uint32_t N = 1000;
+    const size_t S = 64;
+    const uint32_t iterations = 10000;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    std::atomic<uint32_t> ready_count{0};
+    std::vector<int> per_thread_success(thread_count, 1);
+    std::vector<std::thread> threads;
+
+    for (uint32_t i = 0; i < thread_count; i++) {
+        threads.emplace_back([&, i]() {
+            GROUP_AFFINITY old_affinity;
+            ebpf_assert_success(ebpf_set_current_thread_cpu_affinity(i, &old_affinity));
+
+            ready_count++;
+            while (ready_count < thread_count) {
+                std::this_thread::yield();
+            }
+
+            std::vector<void*> held;
+            uint8_t marker = (uint8_t)(i + 1);
+
+            for (uint32_t iter = 0; iter < iterations; iter++) {
+                void* block = ebpf_memory_manager_allocate(mgr);
+                if (block != nullptr) {
+                    // Write marker pattern.
+                    memset(block, marker, S);
+                    held.push_back(block);
+                }
+
+                // With ~50% probability, free a random block.
+                if (!held.empty() && (iter % 2 == 0)) {
+                    size_t idx = iter % held.size();
+                    // Verify marker is not corrupted.
+                    uint8_t* bytes = (uint8_t*)held[idx];
+                    if (bytes[0] != marker) {
+                        per_thread_success[i] = 0;
+                    }
+                    ebpf_memory_manager_free(mgr, held[idx]);
+                    held.erase(held.begin() + (ptrdiff_t)idx);
+                }
+            }
+
+            // Free remaining blocks.
+            for (auto* ptr : held) {
+                ebpf_memory_manager_free(mgr, ptr);
+            }
+
+            ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+        });
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    // Verify all threads had consistent marker patterns.
+    for (uint32_t i = 0; i < thread_count; i++) {
+        REQUIRE(per_thread_success[i]);
+    }
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_zero_blocks", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, 0, 64) == EBPF_SUCCESS);
+
+    // Allocate should return NULL immediately.
+    REQUIRE(ebpf_memory_manager_allocate(mgr) == nullptr);
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_single_block", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, 1, 64) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    void* block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block != nullptr);
+
+    // Second allocate should return NULL.
+    REQUIRE(ebpf_memory_manager_allocate(mgr) == nullptr);
+
+    // Free and re-allocate should succeed.
+    ebpf_memory_manager_free(mgr, block);
+    block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block != nullptr);
+    ebpf_memory_manager_free(mgr, block);
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_single_cpu_system", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    // Even on multi-CPU system, this tests single-CPU behavior by pinning to CPU 0.
+    const uint32_t N = 50;
+    const size_t S = 128;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    std::vector<void*> blocks(N, nullptr);
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+
+    for (uint32_t i = 0; i < N; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_exhaust_and_rebalance", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    if (ebpf_get_cpu_count() < 2) {
+        return;
+    }
+
+    const uint32_t N = 100;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    // Allocate blocks on CPU 0 until we run out locally + globally.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+    std::vector<void*> blocks;
+    for (uint32_t i = 0; i < N; i++) {
+        void* block = ebpf_memory_manager_allocate(mgr);
+        if (block == nullptr) {
+            break;
+        }
+        blocks.push_back(block);
+    }
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Free all blocks on CPU 1 (they'll go to CPU 1's per-CPU list).
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(1, &old_affinity) == EBPF_SUCCESS);
+    for (auto* ptr : blocks) {
+        ebpf_memory_manager_free(mgr, ptr);
+    }
+    blocks.clear();
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Now allocate on CPU 0 again - should succeed via synchronous rebalance.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+    void* block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block != nullptr);
+    ebpf_memory_manager_free(mgr, block);
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_cross_cpu_free_triggers_rebalance", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    if (ebpf_get_cpu_count() < 2) {
+        return;
+    }
+
+    const uint32_t N = 100;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+
+    // Phase 1: Allocate all available blocks from CPU 0.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+    std::vector<void*> blocks;
+    for (;;) {
+        void* block = ebpf_memory_manager_allocate(mgr);
+        if (block == nullptr) {
+            break;
+        }
+        blocks.push_back(block);
+    }
+    REQUIRE(!blocks.empty());
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Phase 2: Free all blocks on CPU 1 (fills CPU 1's per-CPU list + global).
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(1, &old_affinity) == EBPF_SUCCESS);
+    for (auto* ptr : blocks) {
+        ebpf_memory_manager_free(mgr, ptr);
+    }
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Phase 3: Allocate on CPU 0 - should succeed via rebalance from CPU 1.
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+    void* block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block != nullptr);
+    ebpf_memory_manager_free(mgr, block);
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_epoch_integration_deferred_free", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    // The block_size passed to initialize must include the managed header
+    // (which is internal to ebpf_epoch.c). Use a generous size.
+    const size_t block_size = 256; // Plenty of room for internal headers + 64 bytes of payload.
+    const uint32_t N = 10;
+
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, block_size) == EBPF_SUCCESS);
+
+    {
+        ebpf_epoch_scope_t epoch_scope;
+
+        void* memory = ebpf_epoch_allocate_from_manager(mgr);
+        REQUIRE(memory != nullptr);
+
+        // Write a pattern.
+        memset(memory, 0xCC, 64);
+
+        // Free under epoch control - block should NOT be returned to pool yet.
+        ebpf_epoch_free_to_manager(mgr, memory);
+
+        epoch_scope.exit();
+    }
+
+    // Advance epoch to release the deferred free.
+    ebpf_epoch_synchronize();
+
+    // Verify block was returned to pool by allocating again.
+    {
+        ebpf_epoch_scope_t epoch_scope;
+        void* memory2 = ebpf_epoch_allocate_from_manager(mgr);
+        REQUIRE(memory2 != nullptr);
+        ebpf_epoch_free_to_manager(mgr, memory2);
+        epoch_scope.exit();
+    }
+
+    ebpf_epoch_synchronize();
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_epoch_integration_multiple_epochs", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const size_t block_size = 256; // Generous size for headers + payload.
+    const uint32_t N = 20;
+
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, block_size) == EBPF_SUCCESS);
+
+    // Allocate and free across multiple epoch generations.
+    for (int gen = 0; gen < 5; gen++) {
+        {
+            ebpf_epoch_scope_t epoch_scope;
+            std::vector<void*> blocks;
+            for (uint32_t i = 0; i < 4; i++) {
+                void* memory = ebpf_epoch_allocate_from_manager(mgr);
+                REQUIRE(memory != nullptr);
+                memset(memory, (uint8_t)(gen + 1), 64);
+                blocks.push_back(memory);
+            }
+            for (auto* ptr : blocks) {
+                ebpf_epoch_free_to_manager(mgr, ptr);
+            }
+            epoch_scope.exit();
+        }
+        ebpf_epoch_synchronize();
+    }
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_large_block_size", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 16;
+    const size_t S = 4096; // Page-sized blocks.
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    std::vector<void*> blocks(N, nullptr);
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+        // Write the entire block to verify no corruption.
+        memset(blocks[i], (uint8_t)(i + 1), S);
+    }
+
+    for (uint32_t i = 0; i < N; i++) {
+        // Verify pattern is intact.
+        uint8_t* bytes = (uint8_t*)blocks[i];
+        REQUIRE(bytes[0] == (uint8_t)(i + 1));
+        REQUIRE(bytes[S - 1] == (uint8_t)(i + 1));
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_contiguous_allocation_check", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 50;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    // Allocate all blocks.
+    std::vector<void*> blocks;
+    for (uint32_t i = 0; i < N; i++) {
+        void* block = ebpf_memory_manager_allocate(mgr);
+        if (block != nullptr) {
+            blocks.push_back(block);
+        }
+    }
+    REQUIRE(blocks.size() == N);
+
+    // Sort by address.
+    std::sort(blocks.begin(), blocks.end());
+
+    // Verify all blocks are contiguous (each at offset i * S from the first).
+    uint8_t* base = (uint8_t*)blocks[0];
+    for (uint32_t i = 1; i < N; i++) {
+        ptrdiff_t offset = (uint8_t*)blocks[i] - base;
+        REQUIRE(offset % (ptrdiff_t)S == 0);
+        REQUIRE(offset > 0);
+        REQUIRE((size_t)offset < (size_t)N * S);
+    }
+
+    // Free all.
+    for (auto* ptr : blocks) {
+        ebpf_memory_manager_free(mgr, ptr);
+    }
+
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_rebalance_no_op_single_cpu", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    // Use a small block count that forces global-only mode (no per-CPU arrays),
+    // which is the equivalent of a single-CPU system for rebalance purposes.
+    // With EBPF_MEMORY_MIN_BLOCKS_PER_CPU=8 and typical cpu_count >= 2,
+    // N < 8 * cpu_count will trigger global-only mode.
+    const uint32_t N = 4; // Guaranteed to be < 8 * cpu_count on any multi-CPU system.
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    // Allocate all blocks.
+    std::vector<void*> blocks(N, nullptr);
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+
+    // Free all blocks.
+    for (uint32_t i = 0; i < N; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    // Re-allocate all blocks – should succeed (rebalance is a no-op in global-only mode).
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+
+    // Verify N+1 returns NULL.
+    REQUIRE(ebpf_memory_manager_allocate(mgr) == nullptr);
+
+    // Free all.
+    for (uint32_t i = 0; i < N; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+// Release-only robustness tests for invalid operations.
+// In Debug builds, ebpf_assert() calls assert() which aborts the process,
+// so these tests are skipped. In Release builds, ebpf_assert() is a no-op,
+// allowing the tests to verify no crash or corruption occurs on misuse.
+#ifndef _DEBUG
+
+TEST_CASE("memory_manager_free_wrong_block", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 10;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    // Allocate a valid block from the manager.
+    void* valid_block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(valid_block != nullptr);
+
+    // Allocate a separate buffer that is NOT from this manager.
+    uint8_t wrong_block[64] = {};
+
+    // Free the wrong block – in Release, the assertion is a no-op so the
+    // block is silently accepted. Verify no crash occurs.
+    ebpf_memory_manager_free(mgr, wrong_block);
+
+    // Free the valid block to keep the pool balanced.
+    ebpf_memory_manager_free(mgr, valid_block);
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_uninitialize_outstanding", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 10;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    // Allocate N blocks, free only N-1.
+    std::vector<void*> blocks(N, nullptr);
+    for (uint32_t i = 0; i < N; i++) {
+        blocks[i] = ebpf_memory_manager_allocate(mgr);
+        REQUIRE(blocks[i] != nullptr);
+    }
+    for (uint32_t i = 0; i < N - 1; i++) {
+        ebpf_memory_manager_free(mgr, blocks[i]);
+    }
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+
+    // Uninitialize with one outstanding block – in Release, the assertion
+    // is a no-op so uninitialize completes. Verify no crash.
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+TEST_CASE("memory_manager_double_free", "[platform]")
+{
+    _test_helper test_helper;
+    test_helper.initialize();
+
+    const uint32_t N = 10;
+    const size_t S = 64;
+    ebpf_memory_manager_t* mgr = nullptr;
+    REQUIRE(ebpf_memory_manager_initialize(&mgr, N, S) == EBPF_SUCCESS);
+
+    GROUP_AFFINITY old_affinity;
+    REQUIRE(ebpf_set_current_thread_cpu_affinity(0, &old_affinity) == EBPF_SUCCESS);
+
+    void* block = ebpf_memory_manager_allocate(mgr);
+    REQUIRE(block != nullptr);
+    ebpf_memory_manager_free(mgr, block);
+
+    // Double free – in Release, the assertion is a no-op so the block
+    // is pushed again. Verify no crash.
+    ebpf_memory_manager_free(mgr, block);
+
+    ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+    ebpf_memory_manager_uninitialize(mgr);
+}
+
+#endif // !_DEBUG

@@ -3,6 +3,7 @@
 
 #define TEST_AREA "platform"
 #include "ebpf_hash_table.h"
+#include "ebpf_memory.h"
 #include "performance.h"
 
 static void
@@ -343,3 +344,117 @@ PERF_TEST(test_bpf_get_prandom_u32);
 PERF_TEST(test_bpf_ktime_get_boot_ns);
 PERF_TEST(test_bpf_ktime_get_ns);
 PERF_TEST(test_bpf_get_smp_processor_id);
+
+// ──────────────────────────────────────────────────────────────────────
+// Memory Manager Performance Tests
+// ──────────────────────────────────────────────────────────────────────
+
+// State for memory manager performance tests.
+static ebpf_memory_manager_t* _perf_memory_manager = nullptr;
+
+static void
+_perf_memory_manager_alloc_free()
+{
+    void* block = ebpf_memory_manager_allocate(_perf_memory_manager);
+    if (block != nullptr) {
+        ebpf_memory_manager_free(_perf_memory_manager, block);
+    }
+}
+
+static void
+_perf_cxplat_alloc_free()
+{
+    void* block = cxplat_allocate(CXPLAT_POOL_FLAG_NON_PAGED, 64, 'tseT');
+    if (block != nullptr) {
+        cxplat_free(block, CXPLAT_POOL_FLAG_NON_PAGED, 'tseT');
+    }
+}
+
+// P1: Single-CPU sequential alloc/free – Memory Manager vs cxplat_allocate.
+void
+test_memory_manager_alloc_free(bool preemptible)
+{
+    REQUIRE(ebpf_platform_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_random_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_epoch_initiate() == EBPF_SUCCESS);
+
+    REQUIRE(ebpf_memory_manager_initialize(&_perf_memory_manager, 10000, 64) == EBPF_SUCCESS);
+
+    size_t iterations = PERFORMANCE_MEASURE_ITERATION_COUNT;
+    {
+        _performance_measure measure(
+            "memory_manager_alloc_free", preemptible, _perf_memory_manager_alloc_free, iterations);
+        measure.run_test();
+    }
+
+    ebpf_memory_manager_uninitialize(_perf_memory_manager);
+    _perf_memory_manager = nullptr;
+
+    ebpf_epoch_terminate();
+    ebpf_random_terminate();
+    ebpf_platform_terminate();
+}
+
+// P1 baseline: cxplat_allocate/cxplat_free for comparison.
+void
+test_cxplat_alloc_free(bool preemptible)
+{
+    REQUIRE(ebpf_platform_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_random_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_epoch_initiate() == EBPF_SUCCESS);
+
+    size_t iterations = PERFORMANCE_MEASURE_ITERATION_COUNT;
+    {
+        _performance_measure measure("cxplat_alloc_free", preemptible, _perf_cxplat_alloc_free, iterations);
+        measure.run_test();
+    }
+
+    ebpf_epoch_terminate();
+    ebpf_random_terminate();
+    ebpf_platform_terminate();
+}
+
+// P2: Epoch-integrated alloc/free – Memory Manager with epoch control.
+static ebpf_memory_manager_t* _perf_epoch_memory_manager = nullptr;
+
+static void
+_perf_epoch_memory_manager_alloc_free()
+{
+    ebpf_epoch_state_t epoch_state;
+    ebpf_epoch_enter(&epoch_state);
+    void* block = ebpf_epoch_allocate_from_manager(_perf_epoch_memory_manager);
+    if (block != nullptr) {
+        ebpf_epoch_free_to_manager(_perf_epoch_memory_manager, block);
+    }
+    ebpf_epoch_exit(&epoch_state);
+}
+
+void
+test_memory_manager_epoch_alloc_free(bool preemptible)
+{
+    REQUIRE(ebpf_platform_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_random_initiate() == EBPF_SUCCESS);
+    REQUIRE(ebpf_epoch_initiate() == EBPF_SUCCESS);
+
+    // Block size includes room for the managed allocation header.
+    REQUIRE(ebpf_memory_manager_initialize(&_perf_epoch_memory_manager, 10000, 256) == EBPF_SUCCESS);
+
+    size_t iterations = PERFORMANCE_MEASURE_ITERATION_COUNT;
+    {
+        _performance_measure measure(
+            "memory_manager_epoch_alloc_free", preemptible, _perf_epoch_memory_manager_alloc_free, iterations);
+        measure.run_test();
+    }
+
+    ebpf_epoch_synchronize();
+    ebpf_memory_manager_uninitialize(_perf_epoch_memory_manager);
+    _perf_epoch_memory_manager = nullptr;
+
+    ebpf_epoch_terminate();
+    ebpf_random_terminate();
+    ebpf_platform_terminate();
+}
+
+PERF_TEST(test_memory_manager_alloc_free);
+PERF_TEST(test_cxplat_alloc_free);
+PERF_TEST(test_memory_manager_epoch_alloc_free);
