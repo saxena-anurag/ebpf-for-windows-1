@@ -91,6 +91,22 @@ _ebpf_memory_synchronous_rebalance(_Inout_ ebpf_memory_manager_t* context);
 // ──────────────────────────────────────────────────────────────────────
 
 /**
+ * @brief Check if the per-CPU entry has crossed a watermark and trigger
+ * an async rebalance if so. Called after alloc (head decreased) or
+ * free (head increased) on the fast path.
+ */
+static inline void
+_ebpf_memory_check_watermark(_Inout_ ebpf_memory_manager_t* context, _In_ const ebpf_memory_per_cpu_entry_t* entry)
+{
+    uint32_t low_watermark = (entry->capacity * EBPF_MEMORY_LOW_WATERMARK_PERCENT) / 100;
+    uint32_t high_watermark = (entry->capacity * EBPF_MEMORY_HIGH_WATERMARK_PERCENT) / 100;
+
+    if (entry->head <= low_watermark || entry->head >= high_watermark) {
+        _ebpf_memory_trigger_rebalance(context);
+    }
+}
+
+/**
  * @brief Validate that a block pointer belongs to this memory manager.
  * Debug-only check.
  */
@@ -338,6 +354,7 @@ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ eb
     // Step 4: Fast path - per-CPU list has blocks.
     if (entry->head > 0) {
         block = entry->slots[--entry->head];
+        _ebpf_memory_check_watermark(context, entry);
         ebpf_lower_irql_from_dispatch_if_needed(old_irql);
         return block;
     }
@@ -416,6 +433,7 @@ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_try_allocate(_Inout
     // Fast path - per-CPU list has blocks.
     if (entry->head > 0) {
         block = entry->slots[--entry->head];
+        _ebpf_memory_check_watermark(context, entry);
         ebpf_lower_irql_from_dispatch_if_needed(old_irql);
         return block;
     }
@@ -469,6 +487,7 @@ ebpf_memory_manager_free(_Inout_ ebpf_memory_manager_t* context, _Frees_ptr_ voi
     // Step 4: Fast path - per-CPU list has room.
     if (entry->head < entry->capacity) {
         entry->slots[entry->head++] = block;
+        _ebpf_memory_check_watermark(context, entry);
         ebpf_lower_irql_from_dispatch_if_needed(old_irql);
         return;
     }
