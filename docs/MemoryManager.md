@@ -37,9 +37,21 @@ ebpf_memory_manager_initialize(
     size_t   block_size);   // S – usable size of each block (bytes)
 
 // 2. Allocate – returns one block from the pool.
+//    If per-CPU and global pools are empty, triggers a synchronous rebalance
+//    to scavenge blocks from other CPUs before returning NULL.
 _Must_inspect_result_
 _Ret_writes_maybenull_(block_size) void*
 ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context);
+
+// 2b. Try Allocate – non-blocking variant.
+//     Checks per-CPU list and global pool only. Returns NULL immediately if
+//     no block is available, without triggering a synchronous rebalance.
+//     Use this when the caller can fall back to another allocator (e.g., the
+//     hash table falls back to ebpf_epoch_allocate_with_tag when the pool
+//     is temporarily exhausted due to in-flight epoch-deferred frees).
+_Must_inspect_result_
+_Ret_writes_maybenull_(block_size) void*
+ebpf_memory_manager_try_allocate(_Inout_ ebpf_memory_manager_t* context);
 
 // 3. Free – returns one block to the pool.
 void
@@ -50,9 +62,29 @@ ebpf_memory_manager_free(
 // 4. Uninitialize – tears down the pool.
 void
 ebpf_memory_manager_uninitialize(_Frees_ptr_ ebpf_memory_manager_t* context);
+
+// 5. Ownership check – returns true if the block belongs to this manager's pool.
+bool
+ebpf_memory_manager_owns_block(
+    _In_ const ebpf_memory_manager_t* context,
+    _In_ const void* block);
 ```
 
-All four functions follow existing eBPF naming conventions (`lower_snake_case`, `ebpf_` prefix, SAL annotations, `ebpf_result_t` return).
+All functions follow existing eBPF naming conventions (`lower_snake_case`, `ebpf_` prefix, SAL annotations, `ebpf_result_t` return).
+
+### 2.1 Why `try_allocate` Exists
+
+When the memory manager is integrated with epoch-deferred reclamation, blocks freed
+via `ebpf_epoch_free_to_manager` remain in the epoch free list until the epoch advances.
+These blocks are invisible to the memory manager — they are neither in per-CPU lists
+nor in the global pool. The synchronous rebalance in `allocate` attempts to redistribute
+blocks across CPUs, but it cannot reclaim epoch-held blocks. In environments where the
+rebalance work item runs on a separate thread (e.g., usersim), the calling thread's
+spin-wait deadlocks because the work item thread cannot be scheduled.
+
+`try_allocate` avoids this by returning NULL immediately when per-CPU and global pools
+are empty, allowing the caller to fall back to the regular pool allocator
+(`ebpf_epoch_allocate_with_tag`). The fallback allocation is slower but always succeeds.
 
 ---
 
@@ -79,8 +111,17 @@ All four functions follow existing eBPF naming conventions (`lower_snake_case`, 
 │  rebalance_work_item : cxplat_preemptible_      │
 │                          work_item_t*           │
 │  rebalance_pending   : volatile long (0/1)      │
+│  global_only         : bool                     │
+│     // true if N < EBPF_MEMORY_MIN_BLOCKS_PER_CPU│
+│     // * cpu_count. All blocks in global pool,  │
+│     // no per-CPU entries or rebalancing.        │
 └─────────────────────────────────────────────────┘
 ```
+
+**Global-only mode:** When the total block count is too small to meaningfully distribute
+across CPUs (fewer than `EBPF_MEMORY_MIN_BLOCKS_PER_CPU` (8) blocks per CPU), the manager
+uses a single global spin-locked pool with no per-CPU arrays or rebalancing. This avoids
+pathological rebalancing behavior with very few blocks.
 
 ### 3.2 Per-CPU Entry (cache-line aligned, no locks)
 
@@ -463,7 +504,13 @@ On alloc slow path (per-CPU empty, global also empty):
 
 ### 5.4 Recommendation
 
-**Proposal A** for the initial implementation due to its simplicity and alignment with existing codebase patterns (targeted DPCs, inter-CPU messaging).  Proposal B can be adopted later if telemetry shows rebalancing frequency is too high.
+**Proposal B (watermark-based)** was selected for the implementation. It provides better behavior
+for asymmetric workloads by only moving blocks that are clearly in excess/deficit, avoiding
+thrashing under skewed access patterns. The implementation uses watermarks at 25% (low), 50%
+(target), and 75% (high) of per-CPU capacity.
+
+*Note: The original design recommended Proposal A for v1. During implementation, Proposal B was
+adopted directly due to its modest additional complexity and better suitability for real workloads.*
 
 ---
 
@@ -484,29 +531,64 @@ Hash table delete
               └─► (later) _ebpf_epoch_release_free_list → cxplat_free(header)
 ```
 
-### 6.2 Proposed Flow with Memory Manager
+### 6.2 Implemented Flow with Memory Manager
 
 ```
-Hash table create
-  └─► ebpf_memory_manager_initialize(&mgr, N, value_size)
+LRU Hash table create
+  └─► Compute value_data_size = value_size + supplemental_value_size
+  └─► block_size = ebpf_epoch_memory_manager_block_size(value_data_size)
+  └─► block_count = max_entries * 2   // 2x for in-flight deferred frees
+  └─► ebpf_memory_manager_initialize(&mgr, block_count, block_size)
+  └─► Pass mgr via hash_table_creation_options.memory_manager
 
-Hash table insert
-  └─► ebpf_epoch_allocate_from_manager(mgr)
-        └─► ebpf_memory_manager_allocate(mgr)       // Pool-free fast path
-              └─► Return pre-allocated block
+Hash table insert (value allocation)
+  └─► _ebpf_hash_table_allocate_value(hash_table)
+        ├─► ebpf_epoch_try_allocate_from_manager(mgr)  // Non-blocking
+        │     └─► ebpf_memory_manager_try_allocate(mgr) // Pool-free fast path
+        │           └─► Return pre-allocated block (or NULL if exhausted)
+        └─► If NULL: fallback to hash_table->allocate() // Regular epoch alloc
 
-Hash table delete
-  └─► ebpf_epoch_free_to_manager(mgr, ptr)
-        └─► Stamp freed_epoch on header
-        └─► Insert into per-CPU epoch free list
-              └─► (later) _ebpf_epoch_release_free_list
-                    └─► Detects EBPF_EPOCH_ALLOCATION_MANAGED type
-                    └─► ebpf_memory_manager_free(mgr, block)  // Return to pool
+Hash table delete/update (value free, deferred)
+  └─► _ebpf_hash_table_free_value(hash_table, ptr)
+        ├─► Check ebpf_epoch_managed_block_belongs_to_manager(mgr, ptr)
+        ├─► If owned: ebpf_epoch_free_to_manager(mgr, ptr)  // Deferred
+        │     └─► (later) _ebpf_epoch_release_free_list
+        │           └─► ebpf_memory_manager_free(mgr, block) // Return to pool
+        └─► If not owned: hash_table->free(ptr)  // Regular epoch free
 
-Hash table destroy
-  └─► ebpf_epoch_synchronize()          // Drain all deferred frees
-  └─► ebpf_memory_manager_uninitialize(mgr)
+Hash table destroy (immediate free, no concurrent readers)
+  └─► _ebpf_hash_table_free_value_immediate(hash_table, ptr)
+        ├─► If owned: ebpf_epoch_free_to_manager_immediate(mgr, ptr)
+        │     └─► ebpf_memory_manager_free(mgr, block) // Direct return
+        └─► If not owned: hash_table->free(ptr)
+
+LRU Hash table destroy
+  └─► ebpf_hash_table_destroy()   // Immediate frees for remaining entries
+  └─► Schedule epoch work item: _ebpf_memory_manager_deferred_uninitialize
+        └─► (later, after all epoch-deferred frees complete)
+              └─► ebpf_memory_manager_uninitialize(mgr)
 ```
+
+**Key design decisions:**
+
+1. **Non-blocking allocation (`try_allocate`):** The hash table uses `ebpf_epoch_try_allocate_from_manager`
+   which never triggers a synchronous rebalance. If the pool is temporarily exhausted (blocks held by
+   epoch-deferred frees), the hash table falls back to `ebpf_epoch_allocate_with_tag`.
+
+2. **Ownership-based free routing:** Since fallback allocations come from the regular pool allocator,
+   the free path must determine whether a block belongs to the memory manager or was allocated via
+   fallback. `ebpf_epoch_managed_block_belongs_to_manager` checks if the block's raw pointer falls
+   within the memory manager's contiguous allocation range.
+
+3. **Immediate free during destroy:** `ebpf_hash_table_destroy` uses `_ebpf_hash_table_free_value_immediate`
+   which returns blocks directly to the memory manager (bypassing epoch deferral). This is safe because
+   there are no concurrent readers during destroy.
+
+4. **Deferred memory manager teardown:** The memory manager cannot be uninitialized immediately in the
+   map's delete path because previously-deleted entries may still be in the epoch free list. The map
+   delete is itself called from an epoch work item, so calling `ebpf_epoch_synchronize()` would deadlock.
+   Instead, an epoch work item is scheduled to uninitialize the memory manager after all pending
+   epoch-deferred frees have been processed.
 
 ### 6.3 Epoch Allocation Header Extension
 
@@ -544,15 +626,41 @@ typedef struct _ebpf_epoch_managed_allocation_header
 } ebpf_epoch_managed_allocation_header_t;
 
 // Allocate a block from a memory manager, under epoch control.
+// Uses ebpf_memory_manager_allocate (may trigger synchronous rebalance).
 _Must_inspect_result_
 _Ret_writes_maybenull_(block_size) void*
 ebpf_epoch_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager);
+
+// Non-blocking variant — uses ebpf_memory_manager_try_allocate.
+// Returns NULL immediately if pool is exhausted, without synchronous rebalance.
+_Must_inspect_result_
+_Ret_writes_maybenull_(block_size) void*
+ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager);
 
 // Free a block back to a memory manager, under epoch control (deferred).
 void
 ebpf_epoch_free_to_manager(
     _Inout_ ebpf_memory_manager_t* manager,
     _Frees_ptr_ void* block);
+
+// Free a block back to a memory manager immediately (non-deferred).
+// Use only when there are no concurrent readers (e.g., during hash table destroy).
+void
+ebpf_epoch_free_to_manager_immediate(
+    _Inout_ ebpf_memory_manager_t* manager,
+    _Frees_ptr_ void* block);
+
+// Compute the memory manager block size needed for a given usable payload size.
+// Includes the internal epoch managed allocation header.
+size_t
+ebpf_epoch_memory_manager_block_size(size_t usable_size);
+
+// Check if a user-visible block (as returned by ebpf_epoch_allocate_from_manager)
+// belongs to the given memory manager's pool.
+bool
+ebpf_epoch_managed_block_belongs_to_manager(
+    _In_ const ebpf_memory_manager_t* manager,
+    _In_ const void* block);
 ```
 
 ### 6.5 Changes to `_ebpf_epoch_release_free_list`
@@ -570,14 +678,117 @@ case EBPF_EPOCH_ALLOCATION_MANAGED: {
 
 ### 6.6 Hash Table Integration
 
-The hash table creation options already support custom allocate/free callbacks:
+The hash table natively supports an optional memory manager for value data allocations.
+
+**Changes to `ebpf_hash_table_creation_options_t`:**
 
 ```c
-ebpf_hash_table_allocate allocate = options->allocate ? options->allocate : ebpf_epoch_allocate_with_tag;
-ebpf_hash_table_free free = options->free ? options->free : ebpf_epoch_free;
+typedef struct _ebpf_hash_table_creation_options
+{
+    // ... existing fields ...
+    ebpf_memory_manager_t* memory_manager; // Optional memory manager for value data.
+                                           // When set, value allocations use the pool.
+                                           // Bucket allocations always use the regular allocator.
+} ebpf_hash_table_creation_options_t;
 ```
 
-For managed pools, the hash table would set these to thin wrappers around `ebpf_epoch_allocate_from_manager` / `ebpf_epoch_free_to_manager`, or the hash table code can be updated to natively understand a memory manager context.
+**Changes to `ebpf_hash_table_t` (internal):**
+
+A `memory_manager` pointer is stored in the hash table struct. Three internal helpers route
+value allocations and frees:
+
+```c
+// Allocate value data: try memory manager first, fall back to regular allocator.
+static void* _ebpf_hash_table_allocate_value(const ebpf_hash_table_t* hash_table)
+{
+    if (hash_table->memory_manager) {
+        void* block = ebpf_epoch_try_allocate_from_manager(hash_table->memory_manager);
+        if (block != NULL) return block;
+        // Pool exhausted — fall back to regular allocator.
+    }
+    return hash_table->allocate(hash_table->value_size + hash_table->supplemental_value_size,
+                                hash_table->allocation_tag);
+}
+
+// Free value data: check ownership to route correctly.
+static void _ebpf_hash_table_free_value(const ebpf_hash_table_t* hash_table, void* value)
+{
+    if (hash_table->memory_manager &&
+        ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value))
+        ebpf_epoch_free_to_manager(hash_table->memory_manager, value);
+    else
+        hash_table->free(value);
+}
+
+// Immediate free for use during ebpf_hash_table_destroy (no concurrent readers).
+static void _ebpf_hash_table_free_value_immediate(const ebpf_hash_table_t* hash_table, void* value)
+{
+    if (hash_table->memory_manager &&
+        ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value))
+        ebpf_epoch_free_to_manager_immediate(hash_table->memory_manager, value);
+    else
+        hash_table->free(value);
+}
+```
+
+**Ownership check rationale:** When the memory manager pool is temporarily exhausted (blocks held by
+epoch-deferred frees), the allocator falls back to `ebpf_epoch_allocate_with_tag`. These fallback blocks
+live outside the memory manager's contiguous allocation. The free path must check ownership to route
+each block to the correct free function. `ebpf_epoch_managed_block_belongs_to_manager` performs this
+check by verifying the block's raw pointer falls within `[raw_allocation, raw_allocation + N * block_size)`.
+
+### 6.7 LRU Hash Table Integration
+
+The LRU hash table (`BPF_MAP_TYPE_LRU_HASH` and `BPF_MAP_TYPE_LRU_PERCPU_HASH`) is the first
+consumer of the memory manager. Regular `BPF_MAP_TYPE_HASH` maps are unchanged.
+
+**Creation (`_create_lru_hash_map`):**
+
+```c
+// Compute the block size: epoch managed header + value + supplemental (LRU metadata).
+size_t value_data_size = map_definition->value_size + supplemental_value_size;
+size_t block_size = ebpf_epoch_memory_manager_block_size(value_data_size);
+
+// Allocate 2x max_entries to handle in-flight deferred frees during update operations.
+uint32_t block_count = map_definition->max_entries * 2;
+ebpf_memory_manager_initialize(&memory_manager, block_count, block_size);
+
+// Pass to hash table via options.
+options.memory_manager = memory_manager;
+```
+
+**Why 2x `max_entries`:** When a value is updated, the new value is allocated before the old value
+is freed (deferred via epoch). Both temporarily consume a block. Under rapid updates, multiple old
+values can accumulate in the epoch free list. The 2x factor provides headroom for this transient
+state. If the pool is still exhausted, the fallback allocator handles the overflow.
+
+**Deletion (`_delete_lru_hash_map`):**
+
+```c
+static void _delete_lru_hash_map(ebpf_core_map_t* map)
+{
+    ebpf_core_lru_map_t* lru_map = ...;
+    ebpf_memory_manager_t* memory_manager = lru_map->memory_manager;
+
+    // Destroy hash table — remaining entries freed immediately (non-deferred).
+    ebpf_hash_table_destroy(lru_map->core_map.data);
+    ebpf_epoch_free_cache_aligned(map);
+
+    // Schedule deferred memory manager teardown via epoch work item.
+    // This ensures all prior epoch-deferred frees have been processed
+    // before the memory manager is uninitialized.
+    if (memory_manager) {
+        ebpf_epoch_work_item_t* work_item = ebpf_epoch_allocate_work_item(
+            memory_manager, _ebpf_memory_manager_deferred_uninitialize);
+        ebpf_epoch_schedule_work_item(work_item);
+    }
+}
+```
+
+**Why deferred teardown:** The map's delete function is called from an epoch work item (the object's
+ref-count-zeroed callback). Calling `ebpf_epoch_synchronize()` from this context would deadlock.
+Previously-deleted entries may still be in the epoch free list as deferred frees. Scheduling the
+memory manager uninitialize as an epoch work item ensures it runs after those deferred frees complete.
 
 ---
 
@@ -676,10 +887,15 @@ This gives O(1) alloc and free with excellent cache behavior (sequential access 
 
 ```
 libs/runtime/
-├── ebpf_memory.h       // Public API declarations
-├── ebpf_memory.c       // Implementation
-├── ebpf_epoch.h        // Extended with ebpf_epoch_allocate_from_manager / free_to_manager
+├── ebpf_memory.h       // Public API: initialize, allocate, try_allocate, free, uninitialize, owns_block
+├── ebpf_memory.c       // Implementation: per-CPU arrays, global pool, watermark-based rebalancing
+├── ebpf_epoch.h        // Extended with epoch-managed allocation APIs
 ├── ebpf_epoch.c        // Extended _ebpf_epoch_release_free_list with MANAGED case
+├── ebpf_hash_table.h   // Extended with optional memory_manager field in creation options
+├── ebpf_hash_table.c   // Value alloc/free routed through memory manager when set
+
+libs/execution_context/
+├── ebpf_maps.c         // LRU hash map creation/deletion uses memory manager
 ```
 
 ---
@@ -991,11 +1207,13 @@ Scenario: P1 – Single-CPU Sequential Alloc/Free (M=100,000, N=10,000, S=64)
 
 | Component | Change |
 |-----------|--------|
-| **New: `ebpf_memory.h`** | Public API for memory manager (initialize, allocate, free, uninitialize). |
-| **New: `ebpf_memory.c`** | Full implementation including per-CPU arrays, global pool, load balancing. |
-| **`ebpf_epoch.c`** | Add `EBPF_EPOCH_ALLOCATION_MANAGED` case in `_ebpf_epoch_release_free_list`. Add `ebpf_epoch_allocate_from_manager` / `ebpf_epoch_free_to_manager`. |
+| **New: `ebpf_memory.h`** | Public API for memory manager (initialize, allocate, try_allocate, free, uninitialize, owns_block). |
+| **New: `ebpf_memory.c`** | Full implementation including per-CPU arrays, global pool, watermark-based load balancing (Proposal B), global-only mode for small block counts. |
+| **`ebpf_epoch.c`** | Add `EBPF_EPOCH_ALLOCATION_MANAGED` case in `_ebpf_epoch_release_free_list`. Add `ebpf_epoch_allocate_from_manager`, `ebpf_epoch_try_allocate_from_manager`, `ebpf_epoch_free_to_manager`, `ebpf_epoch_free_to_manager_immediate`, `ebpf_epoch_memory_manager_block_size`, `ebpf_epoch_managed_block_belongs_to_manager`. |
 | **`ebpf_epoch.h`** | Declare new epoch APIs. Extend `ebpf_epoch_allocation_type_t` enum. |
-| **Hash table (future)** | Update creation options to use managed allocator for fixed-size value types. |
+| **`ebpf_hash_table.h`** | Add optional `memory_manager` field to `ebpf_hash_table_creation_options_t`. |
+| **`ebpf_hash_table.c`** | Add `memory_manager` to hash table struct. Route value allocations through memory manager with fallback. Ownership-based free routing. Immediate free during destroy. |
+| **`ebpf_maps.c`** | LRU hash map (`BPF_MAP_TYPE_LRU_HASH`, `BPF_MAP_TYPE_LRU_PERCPU_HASH`) creates memory manager with 2x `max_entries` blocks. `_delete_lru_hash_map` uses deferred epoch work item for memory manager teardown. `ebpf_core_lru_map_t` gains `memory_manager` field. Regular `BPF_MAP_TYPE_HASH` is unchanged. |
 
 ---
 

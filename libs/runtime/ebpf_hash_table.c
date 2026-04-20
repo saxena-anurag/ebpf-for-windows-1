@@ -3,6 +3,7 @@
 
 #include "ebpf_epoch.h"
 #include "ebpf_hash_table.h"
+#include "ebpf_memory.h"
 #include "ebpf_random.h"
 
 #include <intrin.h>
@@ -69,9 +70,63 @@ struct _ebpf_hash_table
 
     void* notification_context; //< Context to pass to notification functions.
     ebpf_hash_table_notification_function notification_callback;
-    ebpf_hash_table_notification_type_t notification_flags;                   //< Bitmask of enabled notification types.
+    ebpf_hash_table_notification_type_t notification_flags; //< Bitmask of enabled notification types.
+    ebpf_memory_manager_t* memory_manager;                  //< Optional memory manager for value data allocations.
     _Field_size_(bucket_count) ebpf_hash_bucket_header_and_lock_t buckets[1]; // Pointer to array of buckets.
 };
+
+/**
+ * @brief Allocate value data, routing through the memory manager if set.
+ * Falls back to the regular allocator if the memory manager pool is exhausted.
+ */
+static _Must_inspect_result_
+_Ret_writes_maybenull_(size) void* _ebpf_hash_table_allocate_value(_In_ const ebpf_hash_table_t* hash_table)
+{
+    if (hash_table->memory_manager) {
+        void* block = ebpf_epoch_try_allocate_from_manager(hash_table->memory_manager);
+        if (block != NULL) {
+            return block;
+        }
+        // Memory manager pool exhausted (blocks held by deferred epoch frees).
+        // Fall back to the regular allocator.
+    }
+    return hash_table->allocate(
+        hash_table->value_size + hash_table->supplemental_value_size, hash_table->allocation_tag);
+}
+
+/**
+ * @brief Free value data, routing through the memory manager if the block
+ * belongs to it, otherwise using the regular free function.
+ */
+static void
+_ebpf_hash_table_free_value(_In_ const ebpf_hash_table_t* hash_table, _Frees_ptr_opt_ void* value)
+{
+    if (value == NULL) {
+        return;
+    }
+    if (hash_table->memory_manager && ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value)) {
+        ebpf_epoch_free_to_manager(hash_table->memory_manager, value);
+    } else {
+        hash_table->free(value);
+    }
+}
+
+/**
+ * @brief Free value data immediately (non-deferred), for use during destroy.
+ * When no concurrent readers exist, we can skip epoch deferral.
+ */
+static void
+_ebpf_hash_table_free_value_immediate(_In_ const ebpf_hash_table_t* hash_table, _Frees_ptr_opt_ void* value)
+{
+    if (value == NULL) {
+        return;
+    }
+    if (hash_table->memory_manager && ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value)) {
+        ebpf_epoch_free_to_manager_immediate(hash_table->memory_manager, value);
+    } else {
+        hash_table->free(value);
+    }
+}
 
 typedef enum _ebpf_hash_bucket_operation
 {
@@ -617,8 +672,7 @@ _ebpf_hash_table_replace_bucket(
 
     // Make a copy of the value to insert.
     if (operation != EBPF_HASH_BUCKET_OPERATION_DELETE) {
-        new_data = hash_table->allocate(
-            hash_table->value_size + hash_table->supplemental_value_size, hash_table->allocation_tag);
+        new_data = _ebpf_hash_table_allocate_value(hash_table);
         if (!new_data) {
             result = EBPF_NO_MEMORY;
             goto Done;
@@ -750,9 +804,9 @@ Done:
     }
 
     // Free new_data if any. This occurs if the insert failed.
-    hash_table->free(new_data);
+    _ebpf_hash_table_free_value(hash_table, new_data);
     // Free old_data if any. This occurs if a delete or update succeeded.
-    hash_table->free(old_data);
+    _ebpf_hash_table_free_value(hash_table, old_data);
     // The new bucket should always be inserted into the hash table.
     ebpf_assert(new_bucket == NULL);
     // Free the old bucket if any. This occurs if a insert, delete, or update succeeded.
@@ -819,6 +873,7 @@ ebpf_hash_table_create(_Out_ ebpf_hash_table_t** hash_table, _In_ const ebpf_has
     table->supplemental_value_size = options->supplemental_value_size;
     table->notification_context = options->notification_context;
     table->notification_callback = options->notification_callback;
+    table->memory_manager = options->memory_manager;
 
     // Sanitize notification flags: mask out unsupported bits and disable
     // notifications if callback is not provided.
@@ -850,7 +905,10 @@ ebpf_hash_table_destroy(_In_opt_ _Post_ptr_invalid_ ebpf_hash_table_t* hash_tabl
             for (inner_index = 0; inner_index < bucket->count; inner_index++) {
                 ebpf_hash_bucket_entry_t* entry =
                     _ebpf_hash_table_bucket_entry(hash_table->key_size, bucket, inner_index);
-                hash_table->free(entry->data);
+                // Use immediate free during destroy — no concurrent readers exist,
+                // so epoch deferral is unnecessary and would deadlock if called
+                // from an epoch work item context.
+                _ebpf_hash_table_free_value_immediate(hash_table, entry->data);
                 hash_table->free(entry->backup_bucket);
             }
             hash_table->free(bucket);

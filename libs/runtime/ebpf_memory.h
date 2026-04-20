@@ -36,6 +36,18 @@ extern "C"
         _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context);
 
     /**
+     * @brief Try to allocate one block from the pool without blocking.
+     * Unlike ebpf_memory_manager_allocate, this never triggers a synchronous
+     * rebalance. Returns NULL immediately if no block is available in the
+     * per-CPU list or the global pool.
+     *
+     * @param[in,out] context The memory manager context.
+     * @returns Pointer to a block of block_size bytes, or NULL if unavailable.
+     */
+    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_try_allocate(
+        _Inout_ ebpf_memory_manager_t* context);
+
+    /**
      * @brief Return one block to the pool.
      *
      * @param[in,out] context The memory manager context.
@@ -52,6 +64,16 @@ extern "C"
      */
     void
     ebpf_memory_manager_uninitialize(_Frees_ptr_ ebpf_memory_manager_t* context);
+
+    /**
+     * @brief Check if a block pointer belongs to this memory manager's pool.
+     *
+     * @param[in] context The memory manager context.
+     * @param[in] block Pointer to check.
+     * @returns true if the block is within this manager's raw allocation range.
+     */
+    bool
+    ebpf_memory_manager_owns_block(_In_ const ebpf_memory_manager_t* context, _In_ const void* block);
 
 #ifdef __cplusplus
 }

@@ -527,6 +527,21 @@ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_allocate_from_manager(_Inout
     return (void*)(managed_header + 1);
 }
 
+_Must_inspect_result_
+_Ret_writes_maybenull_(block_size) void* ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
+{
+    ebpf_epoch_managed_allocation_header_t* managed_header =
+        (ebpf_epoch_managed_allocation_header_t*)ebpf_memory_manager_try_allocate(manager);
+    if (managed_header == NULL) {
+        return NULL;
+    }
+
+    memset(managed_header, 0, sizeof(*managed_header));
+    managed_header->manager = manager;
+
+    return (void*)(managed_header + 1);
+}
+
 void
 ebpf_epoch_free_to_manager(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block)
 {
@@ -545,6 +560,37 @@ ebpf_epoch_free_to_manager(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ v
 
     // Insert into the epoch free list for deferred reclamation.
     _ebpf_epoch_insert_in_free_list(&managed_header->base);
+}
+
+size_t
+ebpf_epoch_memory_manager_block_size(size_t usable_size)
+{
+    return sizeof(ebpf_epoch_managed_allocation_header_t) + usable_size;
+}
+
+void
+ebpf_epoch_free_to_manager_immediate(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block)
+{
+    UNREFERENCED_PARAMETER(manager);
+
+    if (!block) {
+        return;
+    }
+
+    // Back up to the managed header.
+    ebpf_epoch_managed_allocation_header_t* managed_header = (ebpf_epoch_managed_allocation_header_t*)block - 1;
+
+    // Return the block directly to the memory manager without epoch deferral.
+    ebpf_memory_manager_free(managed_header->manager, managed_header);
+}
+
+bool
+ebpf_epoch_managed_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* manager, _In_ const void* block)
+{
+    // Back up to the managed header to get the raw block pointer.
+    const ebpf_epoch_managed_allocation_header_t* managed_header =
+        (const ebpf_epoch_managed_allocation_header_t*)block - 1;
+    return ebpf_memory_manager_owns_block(manager, managed_header);
 }
 
 ebpf_epoch_work_item_t*

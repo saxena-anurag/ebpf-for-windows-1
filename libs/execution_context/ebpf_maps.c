@@ -11,6 +11,7 @@
 #include "ebpf_handle.h"
 #include "ebpf_hash_table.h"
 #include "ebpf_maps.h"
+#include "ebpf_memory.h"
 #include "ebpf_object.h"
 #include "ebpf_program.h"
 #include "ebpf_ring_buffer.h"
@@ -260,7 +261,8 @@ typedef struct _ebpf_core_lru_map
 {
     ebpf_core_map_t core_map; //< Core map structure.
     size_t partition_count;   //< Number of LRU partitions. Limited to a maximum of EBPF_LRU_MAXIMUM_PARTITIONS.
-    uint32_t padding[14];     //< Padding to align the partitions array to cache line size.
+    ebpf_memory_manager_t* memory_manager; //< Memory manager for value data allocations.
+    uint32_t padding[12];                  //< Padding to align the partitions array to cache line size.
     __declspec(align(EBPF_CACHE_LINE_SIZE)) ebpf_lru_partition_t
         partitions[1]; //< Array of LRU partitions. Limited to a maximum of EBPF_LRU_MAXIMUM_PARTITIONS.
 } ebpf_core_lru_map_t;
@@ -1165,6 +1167,7 @@ _initialize_hash_map_internal(
         _In_ const uint8_t* value, _Outptr_ const uint8_t** data, _Out_ size_t* length_in_bits),
     _In_opt_ ebpf_hash_table_notification_function notification_callback,
     ebpf_hash_table_notification_type_t notification_flags,
+    _In_opt_ ebpf_memory_manager_t* memory_manager,
     _Inout_ ebpf_core_map_t* map)
 {
     ebpf_result_t retval;
@@ -1186,6 +1189,7 @@ _initialize_hash_map_internal(
         .notification_context = map,
         .notification_callback = notification_callback,
         .notification_flags = notification_flags,
+        .memory_manager = memory_manager,
     };
 
     // Note:
@@ -1219,6 +1223,7 @@ _create_hash_map_internal(
         _In_ const uint8_t* value, _Outptr_ const uint8_t** data, _Out_ size_t* length_in_bits),
     _In_opt_ ebpf_hash_table_notification_function notification_callback,
     ebpf_hash_table_notification_type_t notification_flags,
+    _In_opt_ ebpf_memory_manager_t* memory_manager,
     _Outptr_ ebpf_core_map_t** map)
 {
     ebpf_result_t retval;
@@ -1239,6 +1244,7 @@ _create_hash_map_internal(
         extract_function,
         notification_callback,
         notification_flags,
+        memory_manager,
         local_map);
     if (retval != EBPF_SUCCESS) {
         goto Done;
@@ -1265,7 +1271,16 @@ _create_hash_map(
         return EBPF_INVALID_ARGUMENT;
     }
     return _create_hash_map_internal(
-        sizeof(ebpf_core_map_t), map_definition, 0, 0, false, NULL, NULL, EBPF_HASH_TABLE_NOTIFICATION_TYPE_NONE, map);
+        sizeof(ebpf_core_map_t),
+        map_definition,
+        0,
+        0,
+        false,
+        NULL,
+        NULL,
+        EBPF_HASH_TABLE_NOTIFICATION_TYPE_NONE,
+        NULL,
+        map);
 }
 
 static void
@@ -1343,6 +1358,7 @@ _create_object_hash_map(
         NULL,
         NULL,
         EBPF_HASH_TABLE_NOTIFICATION_TYPE_NONE,
+        NULL,
         &local_map);
     if (result != EBPF_SUCCESS) {
         goto Exit;
@@ -1625,18 +1641,40 @@ _create_lru_hash_map(
         goto Exit;
     }
 
-    retval = _create_hash_map_internal(
-        lru_map_size,
-        map_definition,
-        0,
-        supplemental_value_size,
-        true,
-        NULL,
-        _lru_hash_table_notification,
-        EBPF_HASH_TABLE_NOTIFICATION_TYPE_ALL,
-        (ebpf_core_map_t**)&lru_map);
-    if (retval != EBPF_SUCCESS) {
-        goto Exit;
+    // Create a memory manager for value data allocations.
+    // The block size must include the epoch managed allocation header (used internally
+    // by ebpf_epoch_allocate_from_manager) plus the value and supplemental data.
+    //
+    // Allocate 2x max_entries blocks to handle in-flight deferred frees during
+    // update operations. When a value is updated, the new value is allocated before
+    // the old value is freed (deferred via epoch). Both temporarily consume a block.
+    {
+        size_t value_data_size = map_definition->value_size + supplemental_value_size;
+        size_t block_size = ebpf_epoch_memory_manager_block_size(value_data_size);
+        uint32_t block_count = map_definition->max_entries * 2;
+        ebpf_memory_manager_t* memory_manager = NULL;
+        retval = ebpf_memory_manager_initialize(&memory_manager, block_count, block_size);
+        if (retval != EBPF_SUCCESS) {
+            goto Exit;
+        }
+
+        retval = _create_hash_map_internal(
+            lru_map_size,
+            map_definition,
+            0,
+            supplemental_value_size,
+            true,
+            NULL,
+            _lru_hash_table_notification,
+            EBPF_HASH_TABLE_NOTIFICATION_TYPE_ALL,
+            memory_manager,
+            (ebpf_core_map_t**)&lru_map);
+        if (retval != EBPF_SUCCESS) {
+            ebpf_memory_manager_uninitialize(memory_manager);
+            goto Exit;
+        }
+
+        lru_map->memory_manager = memory_manager;
     }
 
     lru_map->partition_count = partition_count;
@@ -1664,6 +1702,9 @@ Exit:
         if (lru_map && lru_map->core_map.data) {
             ebpf_hash_table_destroy((ebpf_hash_table_t*)lru_map->core_map.data);
         }
+        if (lru_map && lru_map->memory_manager) {
+            ebpf_memory_manager_uninitialize(lru_map->memory_manager);
+        }
         ebpf_epoch_free_cache_aligned(lru_map);
         lru_map = NULL;
     }
@@ -1671,12 +1712,44 @@ Exit:
     EBPF_RETURN_RESULT(retval);
 }
 
+/**
+ * @brief Epoch work item callback that uninitializes the memory manager.
+ * Scheduled as a deferred work item to ensure all epoch-deferred frees
+ * have been processed before the memory manager is torn down.
+ */
+static void
+_ebpf_memory_manager_deferred_uninitialize(_Inout_ void* context)
+{
+    ebpf_memory_manager_t* memory_manager = (ebpf_memory_manager_t*)context;
+    ebpf_memory_manager_uninitialize(memory_manager);
+}
+
 static void
 _delete_lru_hash_map(_In_ _Post_invalid_ ebpf_core_map_t* map)
 {
     ebpf_core_lru_map_t* lru_map = EBPF_FROM_FIELD(ebpf_core_lru_map_t, core_map, map);
+    ebpf_memory_manager_t* memory_manager = lru_map->memory_manager;
+
+    // ebpf_hash_table_destroy frees remaining value data immediately (non-deferred).
+    // However, previously-deleted entries may still be in the epoch free list
+    // as deferred frees. Those must complete before the memory manager is torn down.
     ebpf_hash_table_destroy((ebpf_hash_table_t*)lru_map->core_map.data);
     ebpf_epoch_free_cache_aligned(map);
+
+    // Schedule memory manager teardown as an epoch work item.
+    // This ensures all deferred frees from prior delete/update operations
+    // have been processed before the memory manager is uninitialized.
+    if (memory_manager) {
+        ebpf_epoch_work_item_t* work_item =
+            ebpf_epoch_allocate_work_item(memory_manager, _ebpf_memory_manager_deferred_uninitialize);
+        if (work_item) {
+            ebpf_epoch_schedule_work_item(work_item);
+        } else {
+            // If we can't allocate a work item, fall back to immediate uninitialize.
+            // This may trigger an assertion if blocks are still in-flight.
+            ebpf_memory_manager_uninitialize(memory_manager);
+        }
+    }
 }
 
 static ebpf_result_t
@@ -2175,6 +2248,7 @@ _create_lpm_map(
         _lpm_extract,
         NULL,
         EBPF_HASH_TABLE_NOTIFICATION_TYPE_NONE,
+        NULL,
         (ebpf_core_map_t**)&lpm_map);
     if (result != EBPF_SUCCESS) {
         goto Exit;
@@ -3385,7 +3459,7 @@ const ebpf_map_metadata_table_t ebpf_map_metadata_tables[] = {
         .properties =
             {
                 .create_map = _create_lru_hash_map,
-                .delete_map = _delete_hash_map,
+                .delete_map = _delete_lru_hash_map,
                 .find_entry = _find_lru_hash_map_entry,
                 .update_entry = _update_hash_map_entry,
                 .delete_entry = _delete_hash_map_entry,
@@ -3422,7 +3496,7 @@ const ebpf_map_metadata_table_t ebpf_map_metadata_tables[] = {
         .properties =
             {
                 .create_map = _create_lru_hash_map,
-                .delete_map = _delete_hash_map,
+                .delete_map = _delete_lru_hash_map,
                 .find_entry = _find_lru_hash_map_entry,
                 .update_entry = _update_hash_map_entry,
                 .update_entry_per_cpu = _update_entry_per_cpu,
@@ -4365,6 +4439,7 @@ _ebpf_custom_map_create_hash_map(
         NULL,
         _custom_hash_map_notification,
         EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE,
+        NULL,
         map);
     EBPF_RETURN_RESULT(result);
 }

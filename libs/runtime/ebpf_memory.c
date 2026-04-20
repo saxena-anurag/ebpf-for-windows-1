@@ -113,6 +113,17 @@ _ebpf_memory_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* context,
 // Initialize
 // ──────────────────────────────────────────────────────────────────────
 
+bool
+ebpf_memory_manager_owns_block(_In_ const ebpf_memory_manager_t* context, _In_ const void* block)
+{
+    if (context == NULL || context->raw_allocation == NULL || context->total_block_count == 0) {
+        return false;
+    }
+    const uint8_t* raw = (const uint8_t*)context->raw_allocation;
+    const uint8_t* ptr = (const uint8_t*)block;
+    return (ptr >= raw && ptr < raw + (size_t)context->total_block_count * context->block_size);
+}
+
 _Must_inspect_result_ ebpf_result_t
 ebpf_memory_manager_initialize(_Out_ ebpf_memory_manager_t** context, uint32_t block_count, size_t block_size)
 {
@@ -369,6 +380,58 @@ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ eb
     KeReleaseSpinLockFromDpcLevel(&context->global_pool.lock);
 
     // Step 7: All N blocks are genuinely in use.
+    ebpf_lower_irql_from_dispatch_if_needed(old_irql);
+    return NULL;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Try Allocate (non-blocking)
+// ──────────────────────────────────────────────────────────────────────
+
+_Must_inspect_result_
+_Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_try_allocate(_Inout_ ebpf_memory_manager_t* context)
+{
+    void* block = NULL;
+
+    if (context->total_block_count == 0) {
+        return NULL;
+    }
+
+    // Global-only mode: just use the global pool with a spin lock.
+    if (context->global_only) {
+        KIRQL old_irql;
+        KeAcquireSpinLock(&context->global_pool.lock, &old_irql);
+        if (context->global_pool.count > 0) {
+            block = context->global_pool.slots[--context->global_pool.count];
+        }
+        KeReleaseSpinLock(&context->global_pool.lock, old_irql);
+        return block;
+    }
+
+    // Per-CPU mode:
+    KIRQL old_irql = ebpf_raise_irql_to_dispatch_if_needed();
+    uint32_t cpu_id = ebpf_get_current_cpu();
+    ebpf_memory_per_cpu_entry_t* entry = &context->per_cpu_entries[cpu_id];
+
+    // Fast path - per-CPU list has blocks.
+    if (entry->head > 0) {
+        block = entry->slots[--entry->head];
+        ebpf_lower_irql_from_dispatch_if_needed(old_irql);
+        return block;
+    }
+
+    // Slow path - per-CPU list is empty, try global pool.
+    KeAcquireSpinLockAtDpcLevel(&context->global_pool.lock);
+    if (context->global_pool.count > 0) {
+        block = context->global_pool.slots[--context->global_pool.count];
+        KeReleaseSpinLockFromDpcLevel(&context->global_pool.lock);
+        _ebpf_memory_trigger_rebalance(context);
+        ebpf_lower_irql_from_dispatch_if_needed(old_irql);
+        return block;
+    }
+    KeReleaseSpinLockFromDpcLevel(&context->global_pool.lock);
+
+    // No blocks available - return NULL without synchronous rebalance.
     ebpf_lower_irql_from_dispatch_if_needed(old_irql);
     return NULL;
 }

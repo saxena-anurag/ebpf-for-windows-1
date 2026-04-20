@@ -148,6 +148,17 @@ extern "C"
         _Inout_ ebpf_memory_manager_t* manager);
 
     /**
+     * @brief Try to allocate a block from a memory manager without blocking.
+     * Same as ebpf_epoch_allocate_from_manager but never triggers a synchronous
+     * rebalance. Returns NULL immediately if the pool is exhausted.
+     *
+     * @param[in,out] manager The memory manager to allocate from.
+     * @returns Pointer to usable memory, or NULL if unavailable.
+     */
+    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_try_allocate_from_manager(
+        _Inout_ ebpf_memory_manager_t* manager);
+
+    /**
      * @brief Free a block back to a memory manager, under epoch control (deferred).
      * The block will be returned to the memory manager only after the current
      * epoch has been released.
@@ -158,6 +169,40 @@ extern "C"
      */
     void
     ebpf_epoch_free_to_manager(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block);
+
+    /**
+     * @brief Free a block back to a memory manager immediately (non-deferred).
+     * Use this only when there are no concurrent readers (e.g., during destroy).
+     * The block is returned to the memory manager immediately without going
+     * through the epoch free list.
+     *
+     * @param[in,out] manager The memory manager that owns the block.
+     * @param[in] block Pointer to the block to free (as returned by
+     *                   ebpf_epoch_allocate_from_manager).
+     */
+    void
+    ebpf_epoch_free_to_manager_immediate(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block);
+
+    /**
+     * @brief Compute the memory manager block size needed for a given usable payload size.
+     * The block size includes the internal epoch managed allocation header.
+     *
+     * @param[in] usable_size The usable payload size in bytes.
+     * @returns The total block size to pass to ebpf_memory_manager_initialize.
+     */
+    size_t
+    ebpf_epoch_memory_manager_block_size(size_t usable_size);
+
+    /**
+     * @brief Check if a user-visible block (as returned by ebpf_epoch_allocate_from_manager)
+     * belongs to the given memory manager.
+     *
+     * @param[in] manager The memory manager to check against.
+     * @param[in] block Pointer to the block (user-visible portion).
+     * @returns true if the block belongs to this manager's pool.
+     */
+    bool
+    ebpf_epoch_managed_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* manager, _In_ const void* block);
 
 #ifdef __cplusplus
 }
