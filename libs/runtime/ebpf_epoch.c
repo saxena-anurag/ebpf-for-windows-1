@@ -508,8 +508,8 @@ ebpf_epoch_free_cache_aligned(_Frees_ptr_opt_ void* memory)
     _ebpf_epoch_insert_in_free_list(header);
 }
 
-_Must_inspect_result_
-_Ret_writes_maybenull_(block_size) void* ebpf_epoch_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_epoch_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
 {
     // Allocate a block from the memory manager. The block includes space for the
     // managed allocation header at the beginning.
@@ -527,8 +527,8 @@ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_allocate_from_manager(_Inout
     return (void*)(managed_header + 1);
 }
 
-_Must_inspect_result_
-_Ret_writes_maybenull_(block_size) void* ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
 {
     ebpf_epoch_managed_allocation_header_t* managed_header =
         (ebpf_epoch_managed_allocation_header_t*)ebpf_memory_manager_try_allocate(manager);

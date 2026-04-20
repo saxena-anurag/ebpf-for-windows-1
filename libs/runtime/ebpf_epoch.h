@@ -144,8 +144,8 @@ extern "C"
      * @param[in,out] manager The memory manager to allocate from.
      * @returns Pointer to usable memory, or NULL if allocation fails.
      */
-    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_allocate_from_manager(
-        _Inout_ ebpf_memory_manager_t* manager);
+    _Must_inspect_result_ _Ret_maybenull_ void*
+    ebpf_epoch_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager);
 
     /**
      * @brief Try to allocate a block from a memory manager without blocking.
@@ -155,8 +155,8 @@ extern "C"
      * @param[in,out] manager The memory manager to allocate from.
      * @returns Pointer to usable memory, or NULL if unavailable.
      */
-    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_epoch_try_allocate_from_manager(
-        _Inout_ ebpf_memory_manager_t* manager);
+    _Must_inspect_result_ _Ret_maybenull_ void*
+    ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager);
 
     /**
      * @brief Free a block back to a memory manager, under epoch control (deferred).

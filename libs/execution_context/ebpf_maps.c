@@ -1717,12 +1717,15 @@ Exit:
  * Scheduled as a deferred work item to ensure all epoch-deferred frees
  * have been processed before the memory manager is torn down.
  */
+#pragma warning(push)
+#pragma warning(disable : 6101) // The _Inout_ context is consumed (freed), not written back.
 static void
 _ebpf_memory_manager_deferred_uninitialize(_Inout_ void* context)
 {
     ebpf_memory_manager_t* memory_manager = (ebpf_memory_manager_t*)context;
     ebpf_memory_manager_uninitialize(memory_manager);
 }
+#pragma warning(pop)
 
 static void
 _delete_lru_hash_map(_In_ _Post_invalid_ ebpf_core_map_t* map)

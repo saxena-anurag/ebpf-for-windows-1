@@ -32,8 +32,8 @@ extern "C"
      * @param[in,out] context The memory manager context.
      * @returns Pointer to a block of block_size bytes, or NULL if all blocks are in use.
      */
-    _Must_inspect_result_
-        _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context);
+    _Must_inspect_result_ _Ret_maybenull_ void*
+    ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context);
 
     /**
      * @brief Try to allocate one block from the pool without blocking.
@@ -44,8 +44,8 @@ extern "C"
      * @param[in,out] context The memory manager context.
      * @returns Pointer to a block of block_size bytes, or NULL if unavailable.
      */
-    _Must_inspect_result_ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_try_allocate(
-        _Inout_ ebpf_memory_manager_t* context);
+    _Must_inspect_result_ _Ret_maybenull_ void*
+    ebpf_memory_manager_try_allocate(_Inout_ ebpf_memory_manager_t* context);
 
     /**
      * @brief Return one block to the pool.

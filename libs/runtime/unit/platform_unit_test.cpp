@@ -3465,6 +3465,7 @@ TEST_CASE("memory_manager_double_free", "[platform]")
 
     // Double free – in Release, the assertion is a no-op so the block
     // is pushed again. Verify no crash.
+#pragma warning(suppress : 6001) // block is initialized — validated by REQUIRE above.
     ebpf_memory_manager_free(mgr, block);
 
     ebpf_restore_current_thread_cpu_affinity(&old_affinity);

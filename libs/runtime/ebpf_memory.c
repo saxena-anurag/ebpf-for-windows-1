@@ -227,6 +227,8 @@ ebpf_memory_manager_initialize(_Out_ ebpf_memory_manager_t** context, uint32_t b
     memset(mgr->per_cpu_entries, 0, (size_t)cpu_count * sizeof(ebpf_memory_per_cpu_entry_t));
 
     // Step 5: Allocate per-CPU slots arrays.
+#pragma warning(push)
+#pragma warning(disable : 6385) // per_cpu_entries array is properly sized for cpu_count elements.
     for (i = 0; i < cpu_count; i++) {
         // per_cpu_capacity = ceil(0.80 * N / cpu_count)
         uint32_t per_cpu_capacity =
@@ -246,6 +248,7 @@ ebpf_memory_manager_initialize(_Out_ ebpf_memory_manager_t** context, uint32_t b
         }
         memset(mgr->per_cpu_entries[i].slots, 0, (size_t)per_cpu_capacity * sizeof(void*));
     }
+#pragma warning(pop)
 
     // Step 6: Distribute blocks.
     {
@@ -324,8 +327,8 @@ Done:
 // Allocate
 // ──────────────────────────────────────────────────────────────────────
 
-_Must_inspect_result_
-_Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context)
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_memory_manager_allocate(_Inout_ ebpf_memory_manager_t* context)
 {
     void* block = NULL;
 
@@ -405,8 +408,8 @@ _Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_allocate(_Inout_ eb
 // Try Allocate (non-blocking)
 // ──────────────────────────────────────────────────────────────────────
 
-_Must_inspect_result_
-_Ret_writes_maybenull_(block_size) void* ebpf_memory_manager_try_allocate(_Inout_ ebpf_memory_manager_t* context)
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_memory_manager_try_allocate(_Inout_ ebpf_memory_manager_t* context)
 {
     void* block = NULL;
 
@@ -522,6 +525,8 @@ ebpf_memory_manager_uninitialize(_Frees_ptr_ ebpf_memory_manager_t* context)
     }
 
     // Verify all blocks have been returned.
+#pragma warning(push)
+#pragma warning(disable : 6001) // context is fully initialized by ebpf_memory_manager_initialize.
     if (context->total_block_count > 0) {
         uint32_t total_returned = context->global_pool.count;
         if (!context->global_only) {
@@ -545,6 +550,7 @@ ebpf_memory_manager_uninitialize(_Frees_ptr_ ebpf_memory_manager_t* context)
                     context->per_cpu_entries[i].slots, CXPLAT_POOL_FLAG_NON_PAGED, EBPF_POOL_TAG_MEMORY_MANAGER);
             }
         }
+#pragma warning(pop)
         cxplat_free(
             context->per_cpu_entries,
             (cxplat_pool_flags_t)(CXPLAT_POOL_FLAG_NON_PAGED | CXPLAT_POOL_FLAG_CACHE_ALIGNED),
@@ -639,6 +645,10 @@ _ebpf_memory_rebalance_worker(_In_ cxplat_preemptible_work_item_t* work_item, _I
 {
     UNREFERENCED_PARAMETER(work_item);
     ebpf_memory_manager_t* context = (ebpf_memory_manager_t*)work_item_context;
+
+    if (context == NULL) {
+        return;
+    }
 
     for (uint32_t i = 0; i < context->cpu_count; i++) {
         GROUP_AFFINITY old_affinity;

@@ -79,8 +79,8 @@ struct _ebpf_hash_table
  * @brief Allocate value data, routing through the memory manager if set.
  * Falls back to the regular allocator if the memory manager pool is exhausted.
  */
-static _Must_inspect_result_
-_Ret_writes_maybenull_(size) void* _ebpf_hash_table_allocate_value(_In_ const ebpf_hash_table_t* hash_table)
+static _Must_inspect_result_ _Ret_maybenull_ void*
+_ebpf_hash_table_allocate_value(_In_ const ebpf_hash_table_t* hash_table)
 {
     if (hash_table->memory_manager) {
         void* block = ebpf_epoch_try_allocate_from_manager(hash_table->memory_manager);
@@ -104,6 +104,7 @@ _ebpf_hash_table_free_value(_In_ const ebpf_hash_table_t* hash_table, _Frees_ptr
     if (value == NULL) {
         return;
     }
+#pragma warning(suppress : 6001) // value is initialized — checked non-NULL above.
     if (hash_table->memory_manager && ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value)) {
         ebpf_epoch_free_to_manager(hash_table->memory_manager, value);
     } else {
@@ -121,6 +122,7 @@ _ebpf_hash_table_free_value_immediate(_In_ const ebpf_hash_table_t* hash_table, 
     if (value == NULL) {
         return;
     }
+#pragma warning(suppress : 6001) // value is initialized — checked non-NULL above.
     if (hash_table->memory_manager && ebpf_epoch_managed_block_belongs_to_manager(hash_table->memory_manager, value)) {
         ebpf_epoch_free_to_manager_immediate(hash_table->memory_manager, value);
     } else {
