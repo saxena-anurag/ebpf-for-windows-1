@@ -4424,3 +4424,128 @@ _test_custom_maps_invalid(ebpf_execution_type_t execution_type)
 }
 
 DECLARE_ALL_TEST_CASES("custom_maps_invalid", "[end_to_end][custom_maps][!mayfail]", _test_custom_maps_invalid);
+
+TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
+{
+    _test_helper_end_to_end test_helper;
+    test_helper.initialize();
+
+    program_info_provider_t sample_program_info;
+    REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
+
+    // Use non-object map (object_map = false) so values are stored directly.
+    test_sample_map_provider_t sample_map_provider;
+    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false) == EBPF_SUCCESS);
+
+    // 1. Create a custom map.
+    const uint32_t map_size = 10;
+    fd_t custom_map_fd = bpf_map_create(
+        BPF_MAP_TYPE_SAMPLE_HASH_MAP, "concurrent_map", sizeof(uint32_t), sizeof(uint32_t), map_size, nullptr);
+    REQUIRE(custom_map_fd > 0);
+
+    // 2. Insert entries with keys 1 and 2.
+    uint32_t key1 = 1;
+    uint32_t key2 = 2;
+    uint32_t initial_value1 = 100;
+    uint32_t initial_value2 = 200;
+    REQUIRE(bpf_map_update_elem(custom_map_fd, &key1, &initial_value1, 0) == 0);
+    REQUIRE(bpf_map_update_elem(custom_map_fd, &key2, &initial_value2, 0) == 0);
+
+    // 3. Create 6 threads, all time-based (10 seconds).
+    const auto test_duration = std::chrono::seconds(10);
+    // Bounded value range per key: threads cycle values within [0, value_range).
+    const uint32_t value_range = 1000;
+    std::atomic<bool> stop{false};
+    std::atomic<uint32_t> errors{0};
+
+    // Threads 1-2: update values for key 1.
+    // Thread 0 writes values in [1000, 1000 + value_range).
+    // Thread 1 writes values in [1000 + value_range, 1000 + 2*value_range).
+    auto update_key1_fn = [&](uint32_t thread_id) {
+        uint32_t i = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t value = 1000 + thread_id * value_range + (i % value_range);
+            int result = bpf_map_update_elem(custom_map_fd, &key1, &value, 0);
+            if (result != 0) {
+                errors++;
+            }
+            i++;
+        }
+    };
+
+    // Threads 3-4: update values for key 2.
+    // Thread 0 writes values in [2000, 2000 + value_range).
+    // Thread 1 writes values in [2000 + value_range, 2000 + 2*value_range).
+    auto update_key2_fn = [&](uint32_t thread_id) {
+        uint32_t i = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t value = 2000 + thread_id * value_range + (i % value_range);
+            int result = bpf_map_update_elem(custom_map_fd, &key2, &value, 0);
+            if (result != 0) {
+                errors++;
+            }
+            i++;
+        }
+    };
+
+    // Threads 5-6: query map values for key 1 and 2 in a loop and validate ranges.
+    auto query_fn = [&]() {
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t value = 0;
+            // Lookup key 1 - should always succeed since the key is never deleted.
+            int result = bpf_map_lookup_elem(custom_map_fd, &key1, &value);
+            if (result != 0) {
+                errors++;
+            } else if (value < 1000 || value >= 1000 + 2 * value_range) {
+                // Value out of expected range.
+                errors++;
+            }
+            // Lookup key 2 - should always succeed since the key is never deleted.
+            result = bpf_map_lookup_elem(custom_map_fd, &key2, &value);
+            if (result != 0) {
+                errors++;
+            } else if (value < 2000 || value >= 2000 + 2 * value_range) {
+                // Value out of expected range.
+                errors++;
+            }
+        }
+    };
+
+    // Launch all 6 threads.
+    std::jthread t1(update_key1_fn, 0);
+    std::jthread t2(update_key1_fn, 1);
+    std::jthread t3(update_key2_fn, 0);
+    std::jthread t4(update_key2_fn, 1);
+    std::jthread t5(query_fn);
+    std::jthread t6(query_fn);
+
+    // Let all threads run for the test duration.
+    std::this_thread::sleep_for(test_duration);
+
+    // Signal all threads to stop and wait for them.
+    stop.store(true);
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    t5.join();
+    t6.join();
+
+    // Validate no errors occurred.
+    REQUIRE(errors.load() == 0);
+
+    // Validate that keys 1 and 2 still exist and have valid values.
+    uint32_t final_value1 = 0;
+    uint32_t final_value2 = 0;
+    REQUIRE(bpf_map_lookup_elem(custom_map_fd, &key1, &final_value1) == 0);
+    REQUIRE(bpf_map_lookup_elem(custom_map_fd, &key2, &final_value2) == 0);
+
+    // Key 1 values range: [1000, 1000 + 2*value_range).
+    REQUIRE(final_value1 >= 1000);
+    REQUIRE(final_value1 < 1000 + 2 * value_range);
+    // Key 2 values range: [2000, 2000 + 2*value_range).
+    REQUIRE(final_value2 >= 2000);
+    REQUIRE(final_value2 < 2000 + 2 * value_range);
+
+    Platform::_close(custom_map_fd);
+}

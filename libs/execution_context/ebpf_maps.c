@@ -4452,8 +4452,6 @@ _ebpf_custom_map_update_hash_map_entry(
     }
     uint8_t* out_value = NULL;
     uint32_t provider_flags;
-    ebpf_lock_state_t lock_state = 0;
-    bool lock_acquired = false;
 
     UNREFERENCED_PARAMETER(key_size);
     UNREFERENCED_PARAMETER(value_size);
@@ -4471,9 +4469,9 @@ _ebpf_custom_map_update_hash_map_entry(
     }
 
     if (custom_map->provider_dispatch->preprocess_map_update_element) {
-        // Acquire lock to serialize updates.
-        lock_state = ebpf_lock_lock(&custom_map->lock);
-        lock_acquired = true;
+        // Note: We do not need to hold the lock while invoking the provider callback and
+        // updating the value in the map, as the per-bucket lock in the hash map implementation
+        // will ensure the lookup and update are atomic.
 
         // Invoke provider to process the update.
         provider_flags = _get_provider_flags(flags, false);
@@ -4514,9 +4512,6 @@ _ebpf_custom_map_update_hash_map_entry(
     }
 
 Exit:
-    if (lock_acquired) {
-        ebpf_lock_unlock(&custom_map->lock, lock_state);
-    }
     ebpf_free(out_value);
 
     return result;
