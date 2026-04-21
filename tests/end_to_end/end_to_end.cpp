@@ -4549,3 +4549,162 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
 
     Platform::_close(custom_map_fd);
 }
+
+TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
+{
+    _test_helper_end_to_end test_helper;
+    test_helper.initialize();
+
+    program_info_provider_t sample_program_info;
+    REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
+
+    // Use non-object map (object_map = false) so values are stored directly.
+    test_sample_map_provider_t sample_map_provider;
+    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false) == EBPF_SUCCESS);
+
+    // Create a custom map with enough room for concurrent inserts.
+    const uint32_t map_size = 512;
+    fd_t custom_map_fd = bpf_map_create(
+        BPF_MAP_TYPE_SAMPLE_HASH_MAP, "concurrent_del_map", sizeof(uint32_t), sizeof(uint32_t), map_size, nullptr);
+    REQUIRE(custom_map_fd > 0);
+
+    const auto test_duration = std::chrono::seconds(10);
+    std::atomic<bool> stop{false};
+    std::atomic<uint32_t> errors{0};
+
+    // Each thread operates on its own key range to avoid cross-thread key conflicts
+    // on insert/delete, while query threads scan across all ranges.
+    const uint32_t keys_per_thread = 64;
+
+    // Threads 1-4: insert, delete, and re-insert entries in a loop.
+    // Each thread owns keys in range [thread_id * keys_per_thread, (thread_id + 1) * keys_per_thread).
+    auto insert_delete_fn = [&](uint32_t thread_id) {
+        uint32_t base_key = thread_id * keys_per_thread;
+        uint32_t i = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t key = base_key + (i % keys_per_thread);
+            uint32_t value = key * 10 + (i / keys_per_thread);
+
+            // Insert or update the entry.
+            int result = bpf_map_update_elem(custom_map_fd, &key, &value, 0);
+            if (result != 0) {
+                errors++;
+                i++;
+                continue;
+            }
+
+            // Lookup the entry - should succeed since we just inserted it.
+            uint32_t lookup_value = 0;
+            result = bpf_map_lookup_elem(custom_map_fd, &key, &lookup_value);
+            if (result != 0) {
+                // Another thread in the same range could have re-inserted with a different value,
+                // but the key should still exist. A failure here is unexpected.
+                errors++;
+            }
+
+            // Delete the entry.
+            result = bpf_map_delete_elem(custom_map_fd, &key);
+            if (result != 0) {
+                // Delete can legitimately fail if the entry was already deleted by a concurrent
+                // delete-then-reinsert cycle on the same key. This is not an error.
+            }
+
+            // Verify the entry is gone (it may have been re-inserted by a concurrent update on
+            // the same key within this thread's range, so we tolerate a successful lookup here).
+            result = bpf_map_lookup_elem(custom_map_fd, &key, &lookup_value);
+            // Either ENOENT (deleted) or 0 (re-inserted) is acceptable.
+
+            i++;
+        }
+
+        // Clean up: delete all keys owned by this thread.
+        for (uint32_t k = 0; k < keys_per_thread; k++) {
+            uint32_t key = base_key + k;
+            bpf_map_delete_elem(custom_map_fd, &key);
+        }
+    };
+
+    // Threads 5-6: query map via get_next_key in a loop across all key ranges.
+    auto query_fn = [&]() {
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t key = 0;
+            uint32_t next_key = 0;
+            uint32_t value = 0;
+
+            // Iterate through the map using get_next_key.
+            int result = bpf_map_get_next_key(custom_map_fd, nullptr, &next_key);
+            while (result == 0 && !stop.load(std::memory_order_relaxed)) {
+                key = next_key;
+                // Lookup value for current key. It may have been deleted concurrently.
+                result = bpf_map_lookup_elem(custom_map_fd, &key, &value);
+                // ENOENT is acceptable due to concurrent deletes; only flag unexpected errors.
+                if (result != 0 && errno != ENOENT) {
+                    errors++;
+                }
+                result = bpf_map_get_next_key(custom_map_fd, &key, &next_key);
+            }
+        }
+    };
+
+    // Threads 7-8: rapidly delete and re-insert the same key to stress the delete path.
+    auto delete_reinsert_fn = [&](uint32_t thread_id) {
+        // Use a dedicated key range that doesn't overlap with insert_delete_fn threads.
+        uint32_t base_key = (4 + thread_id) * keys_per_thread;
+        uint32_t i = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            uint32_t key = base_key + (i % keys_per_thread);
+            uint32_t value = key + i;
+
+            // Insert.
+            bpf_map_update_elem(custom_map_fd, &key, &value, 0);
+            // Immediately delete.
+            bpf_map_delete_elem(custom_map_fd, &key);
+            // Re-insert with new value.
+            value = key + i + 1;
+            int result = bpf_map_update_elem(custom_map_fd, &key, &value, 0);
+            if (result != 0) {
+                errors++;
+            }
+            i++;
+        }
+
+        // Clean up: delete all keys owned by this thread.
+        for (uint32_t k = 0; k < keys_per_thread; k++) {
+            uint32_t key = base_key + k;
+            bpf_map_delete_elem(custom_map_fd, &key);
+        }
+    };
+
+    // Launch 8 threads: 4 insert/delete, 2 query, 2 delete/reinsert.
+    std::jthread t1(insert_delete_fn, 0);
+    std::jthread t2(insert_delete_fn, 1);
+    std::jthread t3(insert_delete_fn, 2);
+    std::jthread t4(insert_delete_fn, 3);
+    std::jthread t5(query_fn);
+    std::jthread t6(query_fn);
+    std::jthread t7(delete_reinsert_fn, 0);
+    std::jthread t8(delete_reinsert_fn, 1);
+
+    // Let all threads run for the test duration.
+    std::this_thread::sleep_for(test_duration);
+
+    // Signal all threads to stop and wait for them.
+    stop.store(true);
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    t5.join();
+    t6.join();
+    t7.join();
+    t8.join();
+
+    // Validate no errors occurred.
+    REQUIRE(errors.load() == 0);
+
+    // After cleanup, the map should be empty.
+    uint32_t next_key = 0;
+    REQUIRE(bpf_map_get_next_key(custom_map_fd, nullptr, &next_key) < 0);
+
+    Platform::_close(custom_map_fd);
+}

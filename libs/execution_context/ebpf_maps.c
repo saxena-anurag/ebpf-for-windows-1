@@ -5048,10 +5048,8 @@ ebpf_custom_map_delete_entry(_In_ ebpf_map_t* map, size_t key_size, _In_reads_(k
         ebpf_custom_map_operation_context_t operation_context = {0};
         operation_context.flags = flags;
 
-        ebpf_lock_state_t lock_state = ebpf_lock_lock(&custom_map->lock);
         ebpf_result_t result =
             _delete_hash_map_entry_operation_context(&custom_map->core_map, (uint8_t*)&operation_context, key);
-        ebpf_lock_unlock(&custom_map->lock, lock_state);
         return result;
     } else {
         EBPF_LOG_MESSAGE_UINT64(
