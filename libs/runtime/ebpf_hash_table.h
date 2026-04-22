@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "ebpf_memory.h"
 #include "ebpf_platform.h"
 
 #ifdef __cplusplus
@@ -74,6 +75,10 @@ extern "C"
         ebpf_hash_table_notification_function
             notification_callback; //< Function to call when value storage is allocated or freed.
         ebpf_hash_table_notification_type_t notification_flags; //< Bitmask of notification types to enable.
+        ebpf_memory_manager_t* memory_manager;                  //< Optional memory manager for value data allocations.
+                                                                //< When set, value data is allocated via
+        //< ebpf_epoch_allocate_from_manager / ebpf_epoch_free_to_manager
+        //< instead of the allocate/free callbacks.
     } ebpf_hash_table_creation_options_t;
 
     /**

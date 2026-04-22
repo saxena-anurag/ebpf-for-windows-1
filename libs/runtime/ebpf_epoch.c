@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ebpf_epoch.h"
+#include "ebpf_memory.h"
 #include "ebpf_tracelog.h"
 #include "ebpf_work_queue.h"
 
@@ -181,6 +182,7 @@ typedef enum _ebpf_epoch_allocation_type
     EBPF_EPOCH_ALLOCATION_WORK_ITEM,            ///< Work item.
     EBPF_EPOCH_ALLOCATION_SYNCHRONIZATION,      ///< Synchronization object.
     EBPF_EPOCH_ALLOCATION_MEMORY_CACHE_ALIGNED, ///< Memory allocation that is cache aligned.
+    EBPF_EPOCH_ALLOCATION_MANAGED,              ///< Memory managed by ebpf_memory_manager_t.
 } ebpf_epoch_allocation_type_t;
 
 /**
@@ -214,6 +216,17 @@ typedef struct _ebpf_epoch_synchronization
     ebpf_epoch_allocation_header_t header; ///< Header used to insert the item into the free list.
     KEVENT event;                          ///< Event to signal.
 } ebpf_epoch_synchronization_t;
+
+/**
+ * @brief Extended header for managed allocations.
+ * Contains a back-pointer to the owning memory manager so the release path
+ * can return the block to the correct pool.
+ */
+typedef struct _ebpf_epoch_managed_allocation_header
+{
+    ebpf_epoch_allocation_header_t base; ///< Base epoch allocation header.
+    ebpf_memory_manager_t* manager;      ///< Back-pointer to owning memory manager.
+} ebpf_epoch_managed_allocation_header_t;
 
 /**
  * @brief Rundown reference used to wait for all work items to complete.
@@ -495,6 +508,91 @@ ebpf_epoch_free_cache_aligned(_Frees_ptr_opt_ void* memory)
     _ebpf_epoch_insert_in_free_list(header);
 }
 
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_epoch_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
+{
+    // Allocate a block from the memory manager. The block includes space for the
+    // managed allocation header at the beginning.
+    ebpf_epoch_managed_allocation_header_t* managed_header =
+        (ebpf_epoch_managed_allocation_header_t*)ebpf_memory_manager_allocate(manager);
+    if (managed_header == NULL) {
+        return NULL;
+    }
+
+    // Initialize the managed header.
+    memset(managed_header, 0, sizeof(*managed_header));
+    managed_header->manager = manager;
+
+    // Return pointer past the managed header to the caller.
+    return (void*)(managed_header + 1);
+}
+
+_Must_inspect_result_ _Ret_maybenull_ void*
+ebpf_epoch_try_allocate_from_manager(_Inout_ ebpf_memory_manager_t* manager)
+{
+    ebpf_epoch_managed_allocation_header_t* managed_header =
+        (ebpf_epoch_managed_allocation_header_t*)ebpf_memory_manager_try_allocate(manager);
+    if (managed_header == NULL) {
+        return NULL;
+    }
+
+    memset(managed_header, 0, sizeof(*managed_header));
+    managed_header->manager = manager;
+
+    return (void*)(managed_header + 1);
+}
+
+void
+ebpf_epoch_free_to_manager(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block)
+{
+    UNREFERENCED_PARAMETER(manager);
+
+    if (!block) {
+        return;
+    }
+
+    // Back up to the managed header.
+    ebpf_epoch_managed_allocation_header_t* managed_header = (ebpf_epoch_managed_allocation_header_t*)block - 1;
+
+    // Pool corruption or double free.
+    EBPF_EPOCH_FAIL_FAST(FAST_FAIL_HEAP_METADATA_CORRUPTION, managed_header->base.freed_epoch == 0);
+    managed_header->base.entry_type = EBPF_EPOCH_ALLOCATION_MANAGED;
+
+    // Insert into the epoch free list for deferred reclamation.
+    _ebpf_epoch_insert_in_free_list(&managed_header->base);
+}
+
+size_t
+ebpf_epoch_memory_manager_block_size(size_t usable_size)
+{
+    return sizeof(ebpf_epoch_managed_allocation_header_t) + usable_size;
+}
+
+void
+ebpf_epoch_free_to_manager_immediate(_Inout_ ebpf_memory_manager_t* manager, _Frees_ptr_ void* block)
+{
+    UNREFERENCED_PARAMETER(manager);
+
+    if (!block) {
+        return;
+    }
+
+    // Back up to the managed header.
+    ebpf_epoch_managed_allocation_header_t* managed_header = (ebpf_epoch_managed_allocation_header_t*)block - 1;
+
+    // Return the block directly to the memory manager without epoch deferral.
+    ebpf_memory_manager_free(managed_header->manager, managed_header);
+}
+
+bool
+ebpf_epoch_managed_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* manager, _In_ const void* block)
+{
+    // Back up to the managed header to get the raw block pointer.
+    const ebpf_epoch_managed_allocation_header_t* managed_header =
+        (const ebpf_epoch_managed_allocation_header_t*)block - 1;
+    return ebpf_memory_manager_owns_block(manager, managed_header);
+}
+
 ebpf_epoch_work_item_t*
 ebpf_epoch_allocate_work_item(_In_ void* callback_context, _In_ const void (*callback)(_Inout_ void* context))
 {
@@ -617,6 +715,12 @@ _ebpf_epoch_release_free_list(_Inout_ ebpf_epoch_cpu_entry_t* cpu_entry, int64_t
             case EBPF_EPOCH_ALLOCATION_MEMORY_CACHE_ALIGNED:
                 ebpf_free_cache_aligned(header);
                 break;
+            case EBPF_EPOCH_ALLOCATION_MANAGED: {
+                ebpf_epoch_managed_allocation_header_t* managed_header =
+                    CONTAINING_RECORD(header, ebpf_epoch_managed_allocation_header_t, base);
+                ebpf_memory_manager_free(managed_header->manager, managed_header);
+                break;
+            }
             default:
                 // Pool corruption or internal error.
                 EBPF_EPOCH_FAIL_FAST(FAST_FAIL_CORRUPT_LIST_ENTRY, !"Invalid entry type");
@@ -691,6 +795,12 @@ _ebpf_epoch_insert_in_free_list(_In_ ebpf_epoch_allocation_header_t* header)
             ebpf_epoch_synchronization_t* synchronization =
                 CONTAINING_RECORD(header, ebpf_epoch_synchronization_t, header);
             KeSetEvent(&synchronization->event, 0, false);
+            break;
+        }
+        case EBPF_EPOCH_ALLOCATION_MANAGED: {
+            ebpf_epoch_managed_allocation_header_t* managed_header =
+                CONTAINING_RECORD(header, ebpf_epoch_managed_allocation_header_t, base);
+            ebpf_memory_manager_free(managed_header->manager, managed_header);
             break;
         }
         default:
