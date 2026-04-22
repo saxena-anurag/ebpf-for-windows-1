@@ -112,7 +112,7 @@ _ebpf_memory_check_watermark(_Inout_ ebpf_memory_manager_t* context, _In_ const 
  */
 #ifdef DBG
 static bool
-_ebpf_memory_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* context, _In_ const void* block)
+_ebpf_memory_block_belongs_to_manager(_In_ const ebpf_memory_manager_t* context, _Pre_notnull_ const void* block)
 {
     const uint8_t* raw = (const uint8_t*)context->raw_allocation;
     const uint8_t* ptr = (const uint8_t*)block;
@@ -664,6 +664,35 @@ _ebpf_memory_rebalance_worker(_In_ cxplat_preemptible_work_item_t* work_item, _I
         ebpf_restore_current_thread_cpu_affinity(&old_affinity);
     }
 
+    // Emergency redistribution: if the global pool is still empty after the
+    // normal watermark-based pass, blocks may be stranded on per-CPU lists
+    // that are between watermarks. Force-drain half from each CPU that has
+    // blocks to make them available globally.
+    if (context->global_pool.count == 0) {
+        for (uint32_t i = 0; i < context->cpu_count; i++) {
+            GROUP_AFFINITY old_affinity;
+            ebpf_result_t affinity_result = ebpf_set_current_thread_cpu_affinity(i, &old_affinity);
+            if (affinity_result != EBPF_SUCCESS) {
+                continue;
+            }
+
+            KIRQL old_irql = ebpf_raise_irql_to_dispatch_if_needed();
+            ebpf_memory_per_cpu_entry_t* entry = &context->per_cpu_entries[i];
+            if (entry->head > 1) {
+                uint32_t drain_count = entry->head / 2;
+                KeAcquireSpinLockAtDpcLevel(&context->global_pool.lock);
+                for (uint32_t j = 0; j < drain_count; j++) {
+                    ebpf_assert(context->global_pool.count < context->global_pool.capacity);
+                    context->global_pool.slots[context->global_pool.count++] = entry->slots[--entry->head];
+                }
+                KeReleaseSpinLockFromDpcLevel(&context->global_pool.lock);
+            }
+            ebpf_lower_irql_from_dispatch_if_needed(old_irql);
+
+            ebpf_restore_current_thread_cpu_affinity(&old_affinity);
+        }
+    }
+
     InterlockedExchange(&context->rebalance_pending, 0);
 }
 
@@ -671,9 +700,10 @@ _ebpf_memory_rebalance_worker(_In_ cxplat_preemptible_work_item_t* work_item, _I
  * @brief Synchronous rebalance.
  * Called on the slow path when both per-CPU and global pools are empty.
  * Waits for any in-flight async rebalance to complete, then triggers a new
- * async rebalance and waits for it to finish. This avoids the sync path
- * directly touching other CPUs' per-CPU arrays (which would race with
- * concurrent alloc/free on those CPUs).
+ * async rebalance and waits for it to finish. The async worker includes an
+ * emergency redistribution pass that force-drains blocks stranded on other
+ * CPUs' per-CPU lists when the global pool remains empty after the normal
+ * watermark-based pass.
  */
 static void
 _ebpf_memory_synchronous_rebalance(_Inout_ ebpf_memory_manager_t* context)
