@@ -666,8 +666,8 @@ _ebpf_memory_rebalance_worker(_In_ cxplat_preemptible_work_item_t* work_item, _I
 
     // Emergency redistribution: if the global pool is still empty after the
     // normal watermark-based pass, blocks may be stranded on per-CPU lists
-    // that are between watermarks. Force-drain half from each CPU that has
-    // blocks to make them available globally.
+    // that are between watermarks. Drain all blocks from every CPU to the
+    // global pool so they can be redistributed to whichever CPU needs them.
     if (context->global_pool.count == 0) {
         for (uint32_t i = 0; i < context->cpu_count; i++) {
             GROUP_AFFINITY old_affinity;
@@ -678,8 +678,8 @@ _ebpf_memory_rebalance_worker(_In_ cxplat_preemptible_work_item_t* work_item, _I
 
             KIRQL old_irql = ebpf_raise_irql_to_dispatch_if_needed();
             ebpf_memory_per_cpu_entry_t* entry = &context->per_cpu_entries[i];
-            if (entry->head > 1) {
-                uint32_t drain_count = entry->head / 2;
+            if (entry->head > 0) {
+                uint32_t drain_count = entry->head;
                 KeAcquireSpinLockAtDpcLevel(&context->global_pool.lock);
                 for (uint32_t j = 0; j < drain_count; j++) {
                     ebpf_assert(context->global_pool.count < context->global_pool.capacity);
