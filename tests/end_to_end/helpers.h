@@ -161,7 +161,7 @@ _test_sample_hash_map_create(
 static void
 _test_sample_hash_map_delete(_In_ void* binding_context, _In_ _Post_invalid_ void* map_context);
 
-static ebpf_result_t
+static void
 _test_sample_hash_map_delete_entry(
     _In_ void* binding_context,
     _In_ void* map_context,
@@ -200,7 +200,7 @@ static ebpf_base_map_provider_dispatch_table_t _test_sample_hash_map_dispatch_ta
     .preprocess_associate_program_type = _test_sample_map_associate_program,
     .postprocess_map_find_element = _test_sample_hash_map_find_entry,
     .preprocess_map_update_element = _test_sample_hash_map_update_entry,
-    .preprocess_map_delete_element = _test_sample_hash_map_delete_entry};
+    .postprocess_map_delete_element = _test_sample_hash_map_delete_entry};
 
 static ebpf_base_map_provider_properties_t _test_sample_hash_map_provider_properties = {
     EBPF_BASE_MAP_PROVIDER_PROPERTIES_HEADER, true};
@@ -247,13 +247,13 @@ typedef class _test_sample_map_provider
         if (!register_crud_apis) {
             _test_sample_hash_map_provider_data.base_provider_table->postprocess_map_find_element = nullptr;
             _test_sample_hash_map_provider_data.base_provider_table->preprocess_map_update_element = nullptr;
-            _test_sample_hash_map_provider_data.base_provider_table->preprocess_map_delete_element = nullptr;
+            _test_sample_hash_map_provider_data.base_provider_table->postprocess_map_delete_element = nullptr;
         } else {
             _test_sample_hash_map_provider_data.base_provider_table->postprocess_map_find_element =
                 _test_sample_hash_map_find_entry;
             _test_sample_hash_map_provider_data.base_provider_table->preprocess_map_update_element =
                 _test_sample_hash_map_update_entry;
-            _test_sample_hash_map_provider_data.base_provider_table->preprocess_map_delete_element =
+            _test_sample_hash_map_provider_data.base_provider_table->postprocess_map_delete_element =
                 _test_sample_hash_map_delete_entry;
         }
 
@@ -413,7 +413,7 @@ _test_sample_hash_map_delete(_In_ void* binding_context, _In_ _Post_invalid_ voi
     ebpf_free(context);
 }
 
-static ebpf_result_t
+static void
 _test_sample_hash_map_delete_entry(
     _In_ void* binding_context,
     _In_ void* map_context,
@@ -431,14 +431,14 @@ _test_sample_hash_map_delete_entry(
     UNREFERENCED_PARAMETER(value_size);
 
     if (provider->object_map() && (flags & EBPF_MAP_OPERATION_HELPER)) {
-        return EBPF_OPERATION_NOT_SUPPORTED;
+        return;
     }
 
     // Allocate dummy memory to trigger fault injection if enabled.
     if (!(flags & EBPF_MAP_OPERATION_UPDATE) && !(flags & EBPF_MAP_OPERATION_MAP_CLEANUP)) {
         void* dummy_memory = ebpf_allocate_with_tag(16, EBPF_POOL_TAG_DEFAULT);
         if (dummy_memory == NULL) {
-            return EBPF_OPERATION_NOT_SUPPORTED;
+            return;
         } else {
             ebpf_free(dummy_memory);
         }
@@ -447,10 +447,8 @@ _test_sample_hash_map_delete_entry(
     if (!provider->object_map()) {
         // Nothing to do.
     } else {
-        return _sample_object_hash_map_delete_entry_common(provider->dispatch_table(), value_size, value, flags);
+        _sample_object_hash_map_delete_entry_common(provider->dispatch_table(), value_size, value, flags);
     }
-
-    return EBPF_SUCCESS;
 }
 
 // XDP program information.

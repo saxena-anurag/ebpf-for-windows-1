@@ -237,11 +237,16 @@ typedef ebpf_result_t (*ebpf_postprocess_map_find_element_t)(
  *      process's handle table (e.g., to resolve file descriptors passed as map values).
  *
  * @note If this function succeeds but the subsequent core map update fails, the eBPF runtime will call
- *       ebpf_preprocess_map_delete_element_t with the EBPF_MAP_OPERATION_UPDATE flag to allow the provider to
+ *       ebpf_postprocess_map_delete_element_t with the EBPF_MAP_OPERATION_UPDATE flag to allow the provider to
  *       undo any state changes made during this call.
  * @note In a replace operation (updating an existing key), after the core update succeeds,
- *       ebpf_preprocess_map_delete_element_t will be called for the old value being replaced, also with the
+ *       ebpf_postprocess_map_delete_element_t will be called for the old value being replaced, also with the
  *       EBPF_MAP_OPERATION_UPDATE flag set.
+ *
+ * IRQL: When EBPF_MAP_OPERATION_HELPER is not set (user-mode caller), this function is called at PASSIVE_LEVEL.
+ * Currently, the eBPF runtime blocks map update operations from BPF programs when `updates_original_value` is true,
+ * so this callback is not invoked at DISPATCH_LEVEL in that configuration. If `updates_original_value` is false,
+ * this callback may be invoked at up to DISPATCH_LEVEL when called from a BPF program.
  *
  * @retval EBPF_SUCCESS The operation was successful.
  * @retval EBPF_OPERATION_NOT_SUPPORTED The operation is not supported.
@@ -260,7 +265,7 @@ typedef ebpf_result_t (*ebpf_preprocess_map_update_element_t)(
     uint32_t flags);
 
 /**
- * @brief Pre-process an element deletion from a provider-backed map (called before the core delete).
+ * @brief Post-process an element deletion from a provider-backed map (called after the core delete).
  *
  * This function can be called in three scenarios:
  *      1. Normal map element deletion.
@@ -268,14 +273,13 @@ typedef ebpf_result_t (*ebpf_preprocess_map_update_element_t)(
  *      3. Deletion performed as part of map cleanup.
  * When deletion is part of an update operation, EBPF_MAP_OPERATION_UPDATE is set in the flags parameter.
  * When map cleanup is in progress, EBPF_MAP_OPERATION_MAP_CLEANUP is set in the flags parameter.
- * In both these cases, the provider must not fail the deletion.
  *
  * @param[in] binding_context The binding context provided when the map provider was bound.
  * @param[in] map_context The eBPF map context.
  * @param[in] key_size The size of the key in bytes.
- * @param[in] key Pointer to the key to delete. If the key is not found, the map is unchanged.
+ * @param[in] key Pointer to the key that was deleted.
  * @param[in] value_size The size in bytes of the provider's stored value buffer.
- * @param[in] value Pointer to the provider's stored value buffer for the entry being deleted.
+ * @param[in] value Pointer to the provider's stored value buffer for the entry that was deleted.
  * @param[in] flags Delete flags. Possible values:
  *      EBPF_MAP_OPERATION_UPDATE - The delete is invoked as part of an update operation.
  *      EBPF_MAP_OPERATION_MAP_CLEANUP - The delete is invoked as part of a map cleanup operation.
@@ -283,11 +287,12 @@ typedef ebpf_result_t (*ebpf_preprocess_map_update_element_t)(
  *      is called in the context of the original user mode process, so the provider may implicitly use the current
  *      process's handle table (e.g., to resolve file descriptors passed as map values).
  *
- * @retval EBPF_SUCCESS The operation was successful.
- * @retval EBPF_KEY_NOT_FOUND The key was not found in the map.
- * @retval EBPF_OPERATION_NOT_SUPPORTED The operation is not supported.
+ * IRQL: When EBPF_MAP_OPERATION_HELPER is not set (user-mode caller), this function is called at PASSIVE_LEVEL.
+ * Currently, the eBPF runtime blocks map delete operations from BPF programs when `updates_original_value` is true,
+ * so this callback is not invoked at DISPATCH_LEVEL in that configuration. If `updates_original_value` is false,
+ * this callback may be invoked at up to DISPATCH_LEVEL when called from a BPF program.
  */
-typedef ebpf_result_t (*ebpf_preprocess_map_delete_element_t)(
+typedef void (*ebpf_postprocess_map_delete_element_t)(
     _In_ void* binding_context,
     _In_ void* map_context,
     size_t key_size,
@@ -328,7 +333,7 @@ typedef struct _ebpf_map_provider_dispatch_table
     _Notnull_ ebpf_preprocess_map_associate_program_type_t preprocess_associate_program_type;
     ebpf_postprocess_map_find_element_t postprocess_map_find_element;
     ebpf_preprocess_map_update_element_t preprocess_map_update_element;
-    ebpf_preprocess_map_delete_element_t preprocess_map_delete_element;
+    ebpf_postprocess_map_delete_element_t postprocess_map_delete_element;
 } ebpf_base_map_provider_dispatch_table_t;
 
 /**

@@ -607,8 +607,6 @@ _ebpf_hash_table_replace_bucket(
     // Tracks whether ALLOCATE notification for new_data succeeded.
     // If notification fails, new_data cannot be assumed to be initialized, and we must not invoke FREE notification.
     bool new_data_notified = false;
-    // Tracks whether FREE notification for old_data (delete operation) succeeded.
-    bool old_data_notified = false;
 
     bucket_index = _ebpf_hash_table_compute_bucket_index(hash_table, key);
 
@@ -685,21 +683,8 @@ _ebpf_hash_table_replace_bucket(
         if (index == old_bucket_count) {
             result = EBPF_KEY_NOT_FOUND;
         } else {
-            if (hash_table->notification_callback &&
-                (hash_table->notification_flags & EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE)) {
-                result = hash_table->notification_callback(
-                    hash_table->notification_context,
-                    operation_context,
-                    EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE,
-                    key,
-                    old_data);
-                old_data_notified = true;
-                if (result != EBPF_SUCCESS) {
-                    // Do not modify the hash table if the delete notification fails.
-                    break;
-                }
-            }
-            // No failure path after successful delete notification.
+            // Delete the entry from the bucket first. The FREE notification will be
+            // sent after the bucket lock is released.
             _ebpf_hash_table_bucket_delete(hash_table, old_bucket, index, &new_bucket);
             result = EBPF_SUCCESS;
         }
@@ -737,8 +722,8 @@ Done:
                 key,
                 new_data);
         }
-        if (old_data && !old_data_notified) {
-            // Old data leaves the hash table due to an update/replace.
+        if (old_data) {
+            // Old data leaves the hash table due to an update/replace or delete.
             // Ignore return value from FREE notification.
             (void)hash_table->notification_callback(
                 hash_table->notification_context,
