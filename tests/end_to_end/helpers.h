@@ -434,16 +434,6 @@ _test_sample_hash_map_delete_entry(
         return;
     }
 
-    // Allocate dummy memory to trigger fault injection if enabled.
-    if (!(flags & EBPF_MAP_OPERATION_UPDATE) && !(flags & EBPF_MAP_OPERATION_MAP_CLEANUP)) {
-        void* dummy_memory = ebpf_allocate_with_tag(16, EBPF_POOL_TAG_DEFAULT);
-        if (dummy_memory == NULL) {
-            return;
-        } else {
-            ebpf_free(dummy_memory);
-        }
-    }
-
     if (!provider->object_map()) {
         // Nothing to do.
     } else {
