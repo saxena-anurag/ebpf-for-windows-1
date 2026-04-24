@@ -4433,9 +4433,10 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     program_info_provider_t sample_program_info;
     REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
 
-    // Use non-object map (object_map = false) so values are stored directly.
+    // Use object map (object_map = true) so the provider manages value ownership
+    // (allocating/freeing heap objects on update/delete), exercising the provider callback paths.
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false) == EBPF_SUCCESS);
+    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true) == EBPF_SUCCESS);
 
     // 1. Create a custom map.
     const uint32_t map_size = 10;
@@ -4468,6 +4469,7 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
             int result = bpf_map_update_elem(custom_map_fd, &key1, &value, 0);
             if (result != 0) {
                 errors++;
+                printf("bpf_map_update_elem failed for key1 with value %u with result %d\n", value, result);
             }
             i++;
         }
@@ -4483,6 +4485,7 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
             int result = bpf_map_update_elem(custom_map_fd, &key2, &value, 0);
             if (result != 0) {
                 errors++;
+                printf("bpf_map_update_elem failed for key2 with value %u with result %d\n", value, result);
             }
             i++;
         }
@@ -4496,17 +4499,21 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
             int result = bpf_map_lookup_elem(custom_map_fd, &key1, &value);
             if (result != 0) {
                 errors++;
-            } else if (value < 1000 || value >= 1000 + 2 * value_range) {
-                // Value out of expected range.
+            } else if (value != initial_value1 && (value < 1000 || value >= 1000 + 2 * value_range)) {
+                // The hash table find is lockless and may return a stale snapshot from the old
+                // bucket before an update thread has committed its first write, so the initial
+                // value is also valid.
                 errors++;
+                printf("bpf_map_lookup_elem returned out-of-range value %u for key1\n", value);
             }
             // Lookup key 2 - should always succeed since the key is never deleted.
             result = bpf_map_lookup_elem(custom_map_fd, &key2, &value);
             if (result != 0) {
                 errors++;
-            } else if (value < 2000 || value >= 2000 + 2 * value_range) {
-                // Value out of expected range.
+            } else if (value != initial_value2 && (value < 2000 || value >= 2000 + 2 * value_range)) {
+                // Same as above: the initial value is valid due to lockless stale reads.
                 errors++;
+                printf("bpf_map_lookup_elem returned out-of-range value %u for key2\n", value);
             }
         }
     };
@@ -4558,9 +4565,10 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     program_info_provider_t sample_program_info;
     REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
 
-    // Use non-object map (object_map = false) so values are stored directly.
+    // Use object map (object_map = true) so the provider manages value ownership
+    // (allocating/freeing heap objects on update/delete), exercising the provider callback paths.
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false) == EBPF_SUCCESS);
+    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true) == EBPF_SUCCESS);
 
     // Create a custom map. All threads share the same key space to maximize contention.
     const uint32_t map_size = 512;
@@ -4571,7 +4579,6 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
 
     const auto test_duration = std::chrono::seconds(10);
     std::atomic<bool> stop{false};
-    std::atomic<uint32_t> errors{0};
 
     // Threads 1-4: insert and delete entries on the shared key space.
     // All threads operate on keys [0, shared_key_count), racing with each other.
@@ -4670,9 +4677,6 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     t8.join();
     t9.join();
     t10.join();
-
-    // Validate no errors occurred.
-    REQUIRE(errors.load() == 0);
 
     // Clean up: delete all shared keys.
     for (uint32_t k = 0; k < shared_key_count; k++) {
