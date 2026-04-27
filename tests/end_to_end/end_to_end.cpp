@@ -4663,7 +4663,7 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
             int result = bpf_map_get_next_key(custom_map_fd, nullptr, &next_key);
             while (result == 0 && !stop.load(std::memory_order_relaxed)) {
                 uint32_t key = next_key;
-                // Lookup value for current key. It may have been deleted concurrently.
+                // Look up value for current key. It may have been deleted concurrently.
                 bpf_map_lookup_elem(custom_map_fd, &key, &value);
                 // Result is non-deterministic due to concurrent deletes; no error check.
                 result = bpf_map_get_next_key(custom_map_fd, &key, &next_key);
