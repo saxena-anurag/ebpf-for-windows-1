@@ -4444,13 +4444,24 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
         BPF_MAP_TYPE_SAMPLE_HASH_MAP, "concurrent_map", sizeof(uint32_t), sizeof(uint32_t), map_size, nullptr);
     REQUIRE(custom_map_fd > 0);
 
+    // Close the map fd before REQUIRE to prevent a hang during stack unwinding.
+    // If a REQUIRE fails, the provider destructor calls ExWaitForRundownProtectionRelease,
+    // which blocks if the map still holds a rundown reference.
+    auto require_and_close = [](bool condition, fd_t& fd) {
+        if (!condition) {
+            Platform::_close(fd);
+            fd = ebpf_fd_invalid;
+        }
+        REQUIRE(condition);
+    };
+
     // 2. Insert entries with keys 1 and 2.
     uint32_t key1 = 1;
     uint32_t key2 = 2;
     uint32_t initial_value1 = 100;
     uint32_t initial_value2 = 200;
-    REQUIRE(bpf_map_update_elem(custom_map_fd, &key1, &initial_value1, 0) == 0);
-    REQUIRE(bpf_map_update_elem(custom_map_fd, &key2, &initial_value2, 0) == 0);
+    require_and_close(bpf_map_update_elem(custom_map_fd, &key1, &initial_value1, 0) == 0, custom_map_fd);
+    require_and_close(bpf_map_update_elem(custom_map_fd, &key2, &initial_value2, 0) == 0, custom_map_fd);
 
     // 3. Create 6 threads, all time-based (10 seconds).
     const auto test_duration = std::chrono::seconds(10);
@@ -4538,14 +4549,16 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     t5.join();
     t6.join();
 
-    // Validate no errors occurred.
-    REQUIRE(errors.load() == 0);
+    require_and_close(errors.load() == 0, custom_map_fd);
 
     // Validate that keys 1 and 2 still exist and have valid values.
     uint32_t final_value1 = 0;
     uint32_t final_value2 = 0;
-    REQUIRE(bpf_map_lookup_elem(custom_map_fd, &key1, &final_value1) == 0);
-    REQUIRE(bpf_map_lookup_elem(custom_map_fd, &key2, &final_value2) == 0);
+    require_and_close(bpf_map_lookup_elem(custom_map_fd, &key1, &final_value1) == 0, custom_map_fd);
+    require_and_close(bpf_map_lookup_elem(custom_map_fd, &key2, &final_value2) == 0, custom_map_fd);
+
+    // Close the map fd before final validation.
+    Platform::_close(custom_map_fd);
 
     // Key 1 values range: [1000, 1000 + 2*value_range).
     REQUIRE(final_value1 >= 1000);
@@ -4553,8 +4566,6 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     // Key 2 values range: [2000, 2000 + 2*value_range).
     REQUIRE(final_value2 >= 2000);
     REQUIRE(final_value2 < 2000 + 2 * value_range);
-
-    Platform::_close(custom_map_fd);
 }
 
 TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
@@ -4564,6 +4575,17 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
 
     program_info_provider_t sample_program_info;
     REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
+
+    // Close the map fd before REQUIRE to prevent a hang during stack unwinding.
+    // If a REQUIRE fails, the provider destructor calls ExWaitForRundownProtectionRelease,
+    // which blocks if the map still holds a rundown reference.
+    auto require_and_close = [](bool condition, fd_t& fd) {
+        if (!condition) {
+            Platform::_close(fd);
+            fd = ebpf_fd_invalid;
+        }
+        REQUIRE(condition);
+    };
 
     // Use object map (object_map = true) so the provider manages value ownership
     // (allocating/freeing heap objects on update/delete), exercising the provider callback paths.
@@ -4685,7 +4707,7 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
 
     // After cleanup, the map should be empty.
     uint32_t next_key = 0;
-    REQUIRE(bpf_map_get_next_key(custom_map_fd, nullptr, &next_key) < 0);
+    int next_key_result = bpf_map_get_next_key(custom_map_fd, nullptr, &next_key);
 
-    Platform::_close(custom_map_fd);
+    require_and_close(next_key_result < 0, custom_map_fd);
 }
