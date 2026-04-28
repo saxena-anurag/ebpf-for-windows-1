@@ -4425,7 +4425,8 @@ _test_custom_maps_invalid(ebpf_execution_type_t execution_type)
 
 DECLARE_ALL_TEST_CASES("custom_maps_invalid", "[end_to_end][custom_maps][!mayfail]", _test_custom_maps_invalid);
 
-TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
+static void
+_test_custom_maps_concurrent_update_and_query(bool use_postprocess_delete)
 {
     _test_helper_end_to_end test_helper;
     test_helper.initialize();
@@ -4436,7 +4437,9 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     // Use object map (object_map = true) so the provider manages value ownership
     // (allocating/freeing heap objects on update/delete), exercising the provider callback paths.
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true) == EBPF_SUCCESS);
+    REQUIRE(
+        sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, true, use_postprocess_delete) ==
+        EBPF_SUCCESS);
 
     // 1. Create a custom map.
     const uint32_t map_size = 10;
@@ -4445,8 +4448,6 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     REQUIRE(custom_map_fd > 0);
 
     // Close the map fd before REQUIRE to prevent a hang during stack unwinding.
-    // If a REQUIRE fails, the provider destructor calls ExWaitForRundownProtectionRelease,
-    // which blocks if the map still holds a rundown reference.
     auto require_and_close = [](bool condition, fd_t& fd) {
         if (!condition) {
             Platform::_close(fd);
@@ -4463,73 +4464,51 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     require_and_close(bpf_map_update_elem(custom_map_fd, &key1, &initial_value1, 0) == 0, custom_map_fd);
     require_and_close(bpf_map_update_elem(custom_map_fd, &key2, &initial_value2, 0) == 0, custom_map_fd);
 
-    // 3. Create 6 threads, all time-based (10 seconds).
     const auto test_duration = std::chrono::seconds(10);
-    // Bounded value range per key: threads cycle values within [0, value_range).
     const uint32_t value_range = 1000;
     std::atomic<bool> stop{false};
     std::atomic<uint32_t> errors{0};
 
-    // Threads 1-2: update values for key 1.
-    // Thread 0 writes values in [1000, 1000 + value_range).
-    // Thread 1 writes values in [1000 + value_range, 1000 + 2*value_range).
     auto update_key1_fn = [&](uint32_t thread_id) {
         uint32_t i = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t value = 1000 + thread_id * value_range + (i % value_range);
-            int result = bpf_map_update_elem(custom_map_fd, &key1, &value, 0);
-            if (result != 0) {
+            if (bpf_map_update_elem(custom_map_fd, &key1, &value, 0) != 0) {
                 errors++;
-                printf("bpf_map_update_elem failed for key1 with value %u with result %d\n", value, result);
             }
             i++;
         }
     };
 
-    // Threads 3-4: update values for key 2.
-    // Thread 0 writes values in [2000, 2000 + value_range).
-    // Thread 1 writes values in [2000 + value_range, 2000 + 2*value_range).
     auto update_key2_fn = [&](uint32_t thread_id) {
         uint32_t i = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t value = 2000 + thread_id * value_range + (i % value_range);
-            int result = bpf_map_update_elem(custom_map_fd, &key2, &value, 0);
-            if (result != 0) {
+            if (bpf_map_update_elem(custom_map_fd, &key2, &value, 0) != 0) {
                 errors++;
-                printf("bpf_map_update_elem failed for key2 with value %u with result %d\n", value, result);
             }
             i++;
         }
     };
 
-    // Threads 5-6: query map values for key 1 and 2 in a loop and validate ranges.
     auto query_fn = [&]() {
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t value = 0;
-            // Lookup key 1 - should always succeed since the key is never deleted.
             int result = bpf_map_lookup_elem(custom_map_fd, &key1, &value);
             if (result != 0) {
                 errors++;
             } else if (value != initial_value1 && (value < 1000 || value >= 1000 + 2 * value_range)) {
-                // The hash table find is lockless and may return a stale snapshot from the old
-                // bucket before an update thread has committed its first write, so the initial
-                // value is also valid.
                 errors++;
-                printf("bpf_map_lookup_elem returned out-of-range value %u for key1\n", value);
             }
-            // Lookup key 2 - should always succeed since the key is never deleted.
             result = bpf_map_lookup_elem(custom_map_fd, &key2, &value);
             if (result != 0) {
                 errors++;
             } else if (value != initial_value2 && (value < 2000 || value >= 2000 + 2 * value_range)) {
-                // Same as above: the initial value is valid due to lockless stale reads.
                 errors++;
-                printf("bpf_map_lookup_elem returned out-of-range value %u for key2\n", value);
             }
         }
     };
 
-    // Launch all 6 threads.
     std::jthread t1(update_key1_fn, 0);
     std::jthread t2(update_key1_fn, 1);
     std::jthread t3(update_key2_fn, 0);
@@ -4537,10 +4516,7 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
     std::jthread t5(query_fn);
     std::jthread t6(query_fn);
 
-    // Let all threads run for the test duration.
     std::this_thread::sleep_for(test_duration);
-
-    // Signal all threads to stop and wait for them.
     stop.store(true);
     t1.join();
     t2.join();
@@ -4551,24 +4527,31 @@ TEST_CASE("custom_maps_concurrent_update_and_query", "[custom_maps]")
 
     require_and_close(errors.load() == 0, custom_map_fd);
 
-    // Validate that keys 1 and 2 still exist and have valid values.
     uint32_t final_value1 = 0;
     uint32_t final_value2 = 0;
     require_and_close(bpf_map_lookup_elem(custom_map_fd, &key1, &final_value1) == 0, custom_map_fd);
     require_and_close(bpf_map_lookup_elem(custom_map_fd, &key2, &final_value2) == 0, custom_map_fd);
 
-    // Close the map fd before final validation.
     Platform::_close(custom_map_fd);
 
-    // Key 1 values range: [1000, 1000 + 2*value_range).
     REQUIRE(final_value1 >= 1000);
     REQUIRE(final_value1 < 1000 + 2 * value_range);
-    // Key 2 values range: [2000, 2000 + 2*value_range).
     REQUIRE(final_value2 >= 2000);
     REQUIRE(final_value2 < 2000 + 2 * value_range);
 }
 
-TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
+TEST_CASE("custom_maps_concurrent_update_and_query_postprocess", "[custom_maps]")
+{
+    _test_custom_maps_concurrent_update_and_query(true);
+}
+
+TEST_CASE("custom_maps_concurrent_update_and_query_preprocess", "[custom_maps]")
+{
+    _test_custom_maps_concurrent_update_and_query(false);
+}
+
+static void
+_test_custom_maps_concurrent_insert_delete_and_query(bool use_postprocess_delete)
 {
     _test_helper_end_to_end test_helper;
     test_helper.initialize();
@@ -4576,9 +4559,6 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     program_info_provider_t sample_program_info;
     REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
 
-    // Close the map fd before REQUIRE to prevent a hang during stack unwinding.
-    // If a REQUIRE fails, the provider destructor calls ExWaitForRundownProtectionRelease,
-    // which blocks if the map still holds a rundown reference.
     auto require_and_close = [](bool condition, fd_t& fd) {
         if (!condition) {
             Platform::_close(fd);
@@ -4587,12 +4567,12 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
         REQUIRE(condition);
     };
 
-    // Use object map (object_map = true) so the provider manages value ownership
-    // (allocating/freeing heap objects on update/delete), exercising the provider callback paths.
+    // Use object map (object_map = true) so the provider manages value ownership.
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true) == EBPF_SUCCESS);
+    REQUIRE(
+        sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, true, use_postprocess_delete) ==
+        EBPF_SUCCESS);
 
-    // Create a custom map. All threads share the same key space to maximize contention.
     const uint32_t map_size = 512;
     const uint32_t shared_key_count = 64;
     fd_t custom_map_fd = bpf_map_create(
@@ -4602,37 +4582,20 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     const auto test_duration = std::chrono::seconds(10);
     std::atomic<bool> stop{false};
 
-    // Threads 1-4: insert and delete entries on the shared key space.
-    // All threads operate on keys [0, shared_key_count), racing with each other.
     auto insert_delete_fn = [&](uint32_t thread_id) {
-        uint32_t i = thread_id; // Stagger starting key per thread.
+        uint32_t i = thread_id;
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t key = i % shared_key_count;
             uint32_t value = (thread_id << 16) | (i & 0xFFFF);
-
-            // Insert or update the entry. May race with a concurrent delete on the same key.
-            int result = bpf_map_update_elem(custom_map_fd, &key, &value, 0);
-            if (result != 0) {
-                // Insert can fail if the map is transiently full due to concurrent inserts.
-                // This is acceptable.
-                i++;
-                continue;
+            if (bpf_map_update_elem(custom_map_fd, &key, &value, 0) == 0) {
+                uint32_t lookup_value = 0;
+                bpf_map_lookup_elem(custom_map_fd, &key, &lookup_value);
+                bpf_map_delete_elem(custom_map_fd, &key);
             }
-
-            // Lookup the entry. Another thread may have already deleted or overwritten it.
-            uint32_t lookup_value = 0;
-            bpf_map_lookup_elem(custom_map_fd, &key, &lookup_value);
-            // Result is non-deterministic due to concurrent deletes; no error check here.
-
-            // Delete the entry. Another thread may have already deleted it.
-            bpf_map_delete_elem(custom_map_fd, &key);
-            // Result is non-deterministic; no error check.
-
             i++;
         }
     };
 
-    // Threads 5-6: continuously insert entries on the shared key space (writers).
     auto inserter_fn = [&](uint32_t thread_id) {
         uint32_t i = thread_id;
         while (!stop.load(std::memory_order_relaxed)) {
@@ -4643,7 +4606,6 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
         }
     };
 
-    // Threads 7-8: continuously delete entries on the shared key space (deleters).
     auto deleter_fn = [&](uint32_t thread_id) {
         uint32_t i = thread_id;
         while (!stop.load(std::memory_order_relaxed)) {
@@ -4653,26 +4615,19 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
         }
     };
 
-    // Threads 9-10: query map via get_next_key in a loop across the shared key space.
     auto query_fn = [&]() {
         while (!stop.load(std::memory_order_relaxed)) {
             uint32_t next_key = 0;
             uint32_t value = 0;
-
-            // Iterate through the map using get_next_key.
             int result = bpf_map_get_next_key(custom_map_fd, nullptr, &next_key);
             while (result == 0 && !stop.load(std::memory_order_relaxed)) {
                 uint32_t key = next_key;
-                // Look up value for current key. It may have been deleted concurrently.
                 bpf_map_lookup_elem(custom_map_fd, &key, &value);
-                // Result is non-deterministic due to concurrent deletes; no error check.
                 result = bpf_map_get_next_key(custom_map_fd, &key, &next_key);
             }
         }
     };
 
-    // Launch 10 threads all sharing the same key space:
-    // 4 insert/delete, 2 inserters, 2 deleters, 2 query iterators.
     std::jthread t1(insert_delete_fn, 0);
     std::jthread t2(insert_delete_fn, 1);
     std::jthread t3(insert_delete_fn, 2);
@@ -4684,10 +4639,7 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     std::jthread t9(query_fn);
     std::jthread t10(query_fn);
 
-    // Let all threads run for the test duration.
     std::this_thread::sleep_for(test_duration);
-
-    // Signal all threads to stop and wait for them.
     stop.store(true);
     t1.join();
     t2.join();
@@ -4700,14 +4652,21 @@ TEST_CASE("custom_maps_concurrent_insert_delete_and_query", "[custom_maps]")
     t9.join();
     t10.join();
 
-    // Clean up: delete all shared keys.
     for (uint32_t k = 0; k < shared_key_count; k++) {
         bpf_map_delete_elem(custom_map_fd, &k);
     }
 
-    // After cleanup, the map should be empty.
     uint32_t next_key = 0;
     int next_key_result = bpf_map_get_next_key(custom_map_fd, nullptr, &next_key);
-
     require_and_close(next_key_result < 0, custom_map_fd);
+}
+
+TEST_CASE("custom_maps_concurrent_insert_delete_and_query_postprocess", "[custom_maps]")
+{
+    _test_custom_maps_concurrent_insert_delete_and_query(true);
+}
+
+TEST_CASE("custom_maps_concurrent_insert_delete_and_query_preprocess", "[custom_maps]")
+{
+    _test_custom_maps_concurrent_insert_delete_and_query(false);
 }
