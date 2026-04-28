@@ -1632,6 +1632,10 @@ _create_lru_hash_map(
         goto Exit;
     }
 
+    ebpf_hash_table_notification_type_t notification_types = EBPF_HASH_TABLE_NOTIFICATION_TYPE_ALLOCATE |
+                                                             EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE |
+                                                             EBPF_HASH_TABLE_NOTIFICATION_TYPE_USE;
+
     retval = _create_hash_map_internal(
         lru_map_size,
         map_definition,
@@ -1640,7 +1644,7 @@ _create_lru_hash_map(
         true,
         NULL,
         _lru_hash_table_notification,
-        EBPF_HASH_TABLE_NOTIFICATION_TYPE_ALL,
+        notification_types,
         (ebpf_core_map_t**)&lru_map);
     if (retval != EBPF_SUCCESS) {
         goto Exit;
@@ -4398,7 +4402,10 @@ typedef struct _ebpf_custom_map_operation_context
 
 static ebpf_result_t
 _ebpf_custom_map_create_hash_map(
-    _In_ const ebpf_map_definition_in_memory_t* map_definition, uint32_t value_size, _Inout_ ebpf_core_map_t* map)
+    _In_ const ebpf_map_definition_in_memory_t* map_definition,
+    uint32_t value_size,
+    bool pre_free_notification_supported,
+    _Inout_ ebpf_core_map_t* map)
 {
     ebpf_result_t result;
     size_t actual_value_size = max(value_size, map_definition->value_size);
@@ -4410,7 +4417,8 @@ _ebpf_custom_map_create_hash_map(
         true,
         NULL,
         _custom_hash_map_notification,
-        EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE,
+        pre_free_notification_supported ? EBPF_HASH_TABLE_NOTIFICATION_TYPE_PRE_FREE
+                                        : EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE,
         map);
     EBPF_RETURN_RESULT(result);
 }
@@ -4579,6 +4587,7 @@ _custom_hash_map_notification(
     uint32_t provider_flags;
 
     switch (type) {
+    case EBPF_HASH_TABLE_NOTIFICATION_TYPE_PRE_FREE:
     case EBPF_HASH_TABLE_NOTIFICATION_TYPE_FREE:
         if (!op_context) {
             // Skip free notification if no operation context is provided.
@@ -4745,8 +4754,12 @@ ebpf_custom_map_create(
         }
     }
 
+    bool pre_free_notification_supported =
+        (custom_map->provider_flags & EBPF_HASH_TABLE_NOTIFICATION_TYPE_PRE_FREE) != 0;
+
     // Create hash map.
-    result = _ebpf_custom_map_create_hash_map(map_definition, actual_value_size, &custom_map->core_map);
+    result = _ebpf_custom_map_create_hash_map(
+        map_definition, actual_value_size, pre_free_notification_supported, &custom_map->core_map);
     if (result != EBPF_SUCCESS) {
         EBPF_LOG_MESSAGE_UINT64(
             EBPF_TRACELOG_LEVEL_ERROR,
