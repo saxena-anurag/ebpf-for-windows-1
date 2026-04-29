@@ -4092,7 +4092,8 @@ TEST_CASE("custom_maps_invalid_map_type", "[custom_maps]")
     REQUIRE(invalid_map_fd < 0);
 }
 
-TEST_CASE("custom_maps_user_apis_negative", "[custom_maps]")
+static void
+_test_custom_maps_user_apis_negative(bool use_postprocess_delete)
 {
     _test_helper_end_to_end test_helper;
     test_helper.initialize();
@@ -4102,7 +4103,9 @@ TEST_CASE("custom_maps_user_apis_negative", "[custom_maps]")
     REQUIRE(sample_program_info.initialize(EBPF_PROGRAM_TYPE_SAMPLE) == EBPF_SUCCESS);
 
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false) == EBPF_SUCCESS);
+    REQUIRE(
+        sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false, true, use_postprocess_delete) ==
+        EBPF_SUCCESS);
 
     // 1. Create a custom map.
     fd_t custom_map_fd =
@@ -4149,11 +4152,16 @@ TEST_CASE("custom_maps_user_apis_negative", "[custom_maps]")
     Platform::_close(custom_map_fd);
 }
 
+TEST_CASE("custom_maps_user_apis_negative_postprocess", "[custom_maps]") { _test_custom_maps_user_apis_negative(true); }
+
+TEST_CASE("custom_maps_user_apis_negative_preprocess", "[custom_maps]") { _test_custom_maps_user_apis_negative(false); }
+
 #define OPERATION_SUCCESS 1
 #define OPERATION_FAILURE 0
 
 void
-_test_custom_maps_program_load_common(ebpf_map_type_t type, bool object_map, ebpf_execution_type_t execution_type)
+_test_custom_maps_program_load_common(
+    ebpf_map_type_t type, bool object_map, ebpf_execution_type_t execution_type, bool use_postprocess_delete)
 {
     _test_helper_end_to_end test_helper;
     test_helper.initialize();
@@ -4178,7 +4186,9 @@ _test_custom_maps_program_load_common(ebpf_map_type_t type, bool object_map, ebp
 
     // Initialize provider for SAMPLE_HASH_MAP.
     test_sample_map_provider_t sample_hash_map_provider;
-    REQUIRE(sample_hash_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, object_map) == EBPF_SUCCESS);
+    REQUIRE(
+        sample_hash_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, object_map, true, use_postprocess_delete) ==
+        EBPF_SUCCESS);
 
     auto require_and_close_object = [&](bool condition) {
         if (!condition) {
@@ -4397,14 +4407,17 @@ _test_custom_maps_program_load_common(ebpf_map_type_t type, bool object_map, ebp
 void
 _test_custom_maps_program_load(ebpf_execution_type_t execution_type)
 {
-    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, execution_type);
-    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false, execution_type);
+    // Test all combinations of object_map and use_postprocess_delete.
+    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, execution_type, true);
+    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, execution_type, false);
+    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false, execution_type, true);
+    _test_custom_maps_program_load_common(BPF_MAP_TYPE_SAMPLE_HASH_MAP, false, execution_type, false);
 }
 
 DECLARE_ALL_TEST_CASES("custom_maps_program_load", "[end_to_end][custom_maps]", _test_custom_maps_program_load);
 
 static void
-_test_custom_maps_invalid(ebpf_execution_type_t execution_type)
+_test_custom_maps_invalid_common(ebpf_execution_type_t execution_type, bool use_postprocess_delete)
 {
     _test_helper_end_to_end test_helper;
     test_helper.initialize();
@@ -4420,7 +4433,9 @@ _test_custom_maps_invalid(ebpf_execution_type_t execution_type)
         (execution_type == EBPF_EXECUTION_NATIVE) ? "custom_map_invalid_um.dll" : "custom_map_invalid.o";
 
     test_sample_map_provider_t sample_map_provider;
-    REQUIRE(sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true) == EBPF_SUCCESS);
+    REQUIRE(
+        sample_map_provider.initialize(BPF_MAP_TYPE_SAMPLE_HASH_MAP, true, true, use_postprocess_delete) ==
+        EBPF_SUCCESS);
 
     // Try to load the program with invalid custom map usage.
     result =
@@ -4432,6 +4447,13 @@ _test_custom_maps_invalid(ebpf_execution_type_t execution_type)
     REQUIRE(result != 0);
 
     bpf_object__close(unique_object.release());
+}
+
+static void
+_test_custom_maps_invalid(ebpf_execution_type_t execution_type)
+{
+    _test_custom_maps_invalid_common(execution_type, true);
+    _test_custom_maps_invalid_common(execution_type, false);
 }
 
 DECLARE_ALL_TEST_CASES("custom_maps_invalid", "[end_to_end][custom_maps][!mayfail]", _test_custom_maps_invalid);
