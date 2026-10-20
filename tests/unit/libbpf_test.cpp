@@ -38,6 +38,10 @@ using namespace prevail;
 // Prefer 'enum class' over 'enum'"
 #pragma warning(disable : 26812)
 
+// ebpf_native.h includes kernel map types that conflict with the libbpf map types.
+extern "C" size_t
+ebpf_native_get_authorized_module_count();
+
 // Set of all attach_types defined in ebpfcore. This must be updated any time a new bpf_attach_type is added.
 static const std::set<bpf_attach_type> ebpf_core_attach_types = {
     BPF_ATTACH_TYPE_UNSPEC,
@@ -3603,6 +3607,23 @@ TEST_CASE("bpf_object__open_file with .dll", "[libbpf]")
     REQUIRE(bpf_link__destroy(link.release()) == 0);
 
     bpf_object__close(object);
+}
+
+TEST_CASE("native_module_authorization_consumed_on_attach", "[libbpf][native][native_authorization]")
+{
+    _test_helper_libbpf test_helper;
+    test_helper.initialize();
+
+    REQUIRE(ebpf_native_get_authorized_module_count() == 0);
+    for (size_t iteration = 0; iteration < 3; iteration++) {
+        CAPTURE(iteration);
+        bpf_object_ptr object(bpf_object__open("droppacket_um.dll"));
+        REQUIRE(object != nullptr);
+        REQUIRE(bpf_object__load(object.get()) == 0);
+        REQUIRE(ebpf_native_get_authorized_module_count() == 0);
+        object.reset();
+        REQUIRE(ebpf_native_get_authorized_module_count() == 0);
+    }
 }
 
 TEST_CASE("bpf_object__load with _um.dll-native", "[libbpf]")

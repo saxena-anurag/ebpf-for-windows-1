@@ -132,6 +132,14 @@ extern "C"
     _Must_inspect_result_ ebpf_result_t
     ebpf_native_authorize_module(_In_ const GUID* module_id, _In_ const uint8_t* module_hash);
 
+    /**
+     * @brief Get the number of native modules awaiting authorization consumption or expiration.
+     *
+     * @return Number of entries in the authorized module table.
+     */
+    size_t
+    ebpf_native_get_authorized_module_count();
+
 #ifdef __cplusplus
 }
 #endif

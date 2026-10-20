@@ -1018,8 +1018,7 @@ _ebpf_native_provider_attach_client_callback(
         }
     }
     // Delete the entry from the authorized module table if it exists.
-    (void)ebpf_hash_table_delete(
-        _ebpf_native_authorized_module_table, NULL, (const uint8_t*)&client_context->client_module_id);
+    (void)ebpf_hash_table_delete(_ebpf_native_authorized_module_table, NULL, (const uint8_t*)client_module_id);
 
     ebpf_lock_unlock(&_ebpf_native_authorized_module_table_lock, state);
     if (result != EBPF_SUCCESS) {
@@ -2845,6 +2844,15 @@ ebpf_native_authorize_module(_In_ const GUID* module_id, _In_ const uint8_t* mod
     EBPF_RETURN_RESULT(result);
 }
 
+size_t
+ebpf_native_get_authorized_module_count()
+{
+    ebpf_lock_state_t state = ebpf_lock_lock(&_ebpf_native_authorized_module_table_lock);
+    size_t count = ebpf_hash_table_key_count(_ebpf_native_authorized_module_table);
+    ebpf_lock_unlock(&_ebpf_native_authorized_module_table_lock, state);
+    return count;
+}
+
 /**
  * @brief Callback function for the authorized module cleanup work item.
  * Authorized modules that have not been used for more than EBPF_NATIVE_AUTHORIZE_MODULE_ENTRY_TIMEOUT_NANOSECONDS
@@ -2905,8 +2913,8 @@ _ebpf_native_authorized_module_cleanup_work_item_callback(_Inout_opt_ void* cont
         ebpf_schedule_timer_work_item(
             _ebpf_native_authorized_module_cleanup_work_item,
             EBPF_NATIVE_AUTHORIZE_MODULE_ENTRY_TIMEOUT_NANOSECONDS / 1000);
-        _ebpf_native_authorized_module_cleanup_work_item_scheduled = true;
     }
+    _ebpf_native_authorized_module_cleanup_work_item_scheduled = reschedule_cleanup;
 
     ebpf_lock_unlock(&_ebpf_native_authorized_module_table_lock, state);
 }

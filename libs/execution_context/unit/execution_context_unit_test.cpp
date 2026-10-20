@@ -7,6 +7,7 @@
 #include "ebpf_async.h"
 #include "ebpf_core.h"
 #include "ebpf_maps.h"
+#include "ebpf_native.h"
 #include "ebpf_object.h"
 #include "ebpf_program.h"
 #include "ebpf_ring_buffer.h"
@@ -14,9 +15,11 @@
 #include "helpers.h"
 #include "test_helper.hpp"
 
+#include <chrono>
 #include <iomanip>
 #include <optional>
 #include <set>
+#include <thread>
 
 extern "C"
 {
@@ -2213,6 +2216,30 @@ TEST_CASE("EBPF_OPERATION_CREATE_MAP", "[execution_context][negative]")
     create_map_request->ebpf_map_definition.value_size = 1;
     create_map_request->inner_map_handle = program_handles[0];
     REQUIRE(invoke_protocol(EBPF_OPERATION_CREATE_MAP, request, reply) == EBPF_INVALID_ARGUMENT);
+}
+
+TEST_CASE("native_module_authorization_cleanup_rearms", "[execution_context][native][native_authorization]")
+{
+    _ebpf_core_initializer core;
+    core.initialize();
+
+    GUID module_id = {};
+    REQUIRE(UuidCreate(&module_id) == RPC_S_OK);
+    uint8_t module_hash[32] = {};
+
+    REQUIRE(ebpf_native_get_authorized_module_count() == 0);
+    // The second cycle must rearm the timer after the first cycle drained the table.
+    for (size_t iteration = 0; iteration < 2; iteration++) {
+        CAPTURE(iteration);
+        REQUIRE(ebpf_native_authorize_module(&module_id, module_hash) == EBPF_SUCCESS);
+        REQUIRE(ebpf_native_get_authorized_module_count() == 1);
+
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+        while (ebpf_native_get_authorized_module_count() != 0 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        REQUIRE(ebpf_native_get_authorized_module_count() == 0);
+    }
 }
 
 TEST_CASE("EBPF_OPERATION_LOAD_NATIVE_MODULE", "[execution_context][negative]")
