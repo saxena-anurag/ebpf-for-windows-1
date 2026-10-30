@@ -398,7 +398,7 @@ handle_ebpf_delete_program(
     }
 
     int program_fd = bpf_prog_get_fd_by_id(id);
-    if (program_fd == ebpf_fd_invalid) {
+    if (program_fd < 0) {
         std::cout << "Program not found\n";
         return ERROR_SUPPRESS_OUTPUT;
     }
@@ -582,7 +582,7 @@ handle_ebpf_set_program(
         } else {
             // Try to find the program with the specified ID.
             fd_t program_fd = bpf_prog_get_fd_by_id(id);
-            if (program_fd == ebpf_fd_invalid) {
+            if (program_fd < 0) {
                 std::cerr << "Program not found." << std::endl;
                 return ERROR_SUPPRESS_OUTPUT;
             }
@@ -726,7 +726,7 @@ handle_ebpf_show_programs(
         }
         program_id = next_program_id;
 
-        if (program_fd != ebpf_fd_invalid) {
+        if (program_fd >= 0) {
             Platform::_close(program_fd);
         }
         program_fd = bpf_prog_get_fd_by_id(program_id);
@@ -823,7 +823,7 @@ handle_ebpf_show_programs(
         ebpf_free_string(program_file_name);
         ebpf_free_string(program_section_name);
     }
-    if (program_fd != ebpf_fd_invalid) {
+    if (program_fd >= 0) {
         Platform::_close(program_fd);
     }
     return status;

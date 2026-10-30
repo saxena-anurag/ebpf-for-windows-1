@@ -474,6 +474,7 @@ GlueDeviceIoControl(
 
     ebpf_result_t result;
     const ebpf_operation_header_t* user_request = reinterpret_cast<decltype(user_request)>(input_buffer);
+    ebpf_request_context_t context = {};
     ebpf_operation_header_t* user_reply = nullptr;
     *bytes_returned = 0;
     auto request_id = user_request->id;
@@ -537,7 +538,12 @@ GlueDeviceIoControl(
     local_input_buffer = (*sharedBuffer).data();
     local_output_buffer = (minimum_reply_size > 0) ? (*sharedBuffer).data() : nullptr;
 
+    result = ebpf_namespace_capture_context(&context);
+    if (result != EBPF_SUCCESS) {
+        goto Fail;
+    }
     result = ebpf_core_invoke_protocol_handler(
+        &context,
         request_id,
         local_input_buffer,
         static_cast<uint16_t>(input_buffer_size),

@@ -304,6 +304,11 @@ if ( !$whatif ) {
 }
 
 foreach ( $file in $filelist ) {
+    # EverParse outputs must match regeneration, not clang-format.
+    if ([System.IO.Path]::GetFullPath($file) -match '[\\/]libs[\\/](ioctl_spec|elf_spec)[\\/]generated[\\/]') {
+        continue
+    }
+
     $filecount+=1;
     $cf="$cfargs $file"
 

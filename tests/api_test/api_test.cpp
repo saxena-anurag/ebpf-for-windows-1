@@ -14,6 +14,7 @@
 #include "ebpf_store_helper.h"
 #include "ebpf_structs.h"
 #include "misc_helper.h"
+#include "namespace_tests.h"
 #include "native_helper.hpp"
 #include "program_helper.h"
 #include "sample_ext_helpers.h"
@@ -4518,6 +4519,11 @@ main(int argc, char* argv[])
 {
     if (argc == 3 && strcmp(argv[1], "--ring-buffer-mmap-process-exit-child") == 0) {
         return _ring_buffer_mmap_process_exit_child(argv[2]);
+    }
+
+    int namespace_child_result = namespace_test_child(argc, argv);
+    if (namespace_child_result != -1) {
+        return namespace_child_result;
     }
 
     Catch::Session session;

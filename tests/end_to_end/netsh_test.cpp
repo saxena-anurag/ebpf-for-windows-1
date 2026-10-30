@@ -6,15 +6,20 @@
 #pragma warning(disable : 4200)
 #include "bpf/libbpf.h"
 #pragma warning(pop)
+#include "..\..\tools\netsh\resource.h"
+#include "commands.h"
 #include "cxplat_fault_injection.h"
 #include "ebpf_epoch.h"
 #include "hash.h"
 #include "netsh_test_helper.h"
 #include "platform.h"
 #include "test_helper.hpp"
+#include "utilities.h"
 
 #include <winsock2.h>
 #include <windows.h>
+#include <algorithm>
+#include <exception>
 #include <format>
 #include <fstream>
 #include <iomanip>
@@ -25,6 +30,16 @@
 #include <string.h>
 
 extern std::vector<struct bpf_object*> _ebpf_netsh_objects;
+
+class netsh_namespace_restore
+{
+  public:
+    netsh_namespace_restore() { REQUIRE(ebpf_get_namespace(&_previous) == EBPF_SUCCESS); }
+    ~netsh_namespace_restore() { CHECK(ebpf_set_namespace(&_previous) == EBPF_SUCCESS); }
+
+  private:
+    GUID _previous{};
+};
 
 class _test_helper_netsh
 {
@@ -42,19 +57,318 @@ _test_helper_netsh::_test_helper_netsh() { _ebpf_netsh_objects.clear(); }
 
 _test_helper_netsh::~_test_helper_netsh()
 {
-    if (cxplat_fault_injection_is_enabled()) {
-        for (auto& object : _ebpf_netsh_objects) {
-            bpf_object__close(object);
-        }
-        _ebpf_netsh_objects.clear();
+    if (!cxplat_fault_injection_is_enabled() && std::uncaught_exceptions() == 0) {
+        CHECK(_ebpf_netsh_objects.empty());
     }
-    REQUIRE(_ebpf_netsh_objects.size() == 0);
+    for (auto& object : _ebpf_netsh_objects) {
+        bpf_object__close(object);
+    }
+    _ebpf_netsh_objects.clear();
 }
 
 void
 _test_helper_netsh::initialize()
 {
     test_helper_libbpf.initialize();
+}
+
+TEST_CASE("NU50 netsh namespace selection and canonical GUID validation", "[netsh][namespace]")
+{
+    _test_helper_netsh test_helper;
+    test_helper.initialize();
+    netsh_namespace_restore restore;
+    int result;
+    auto output = run_netsh_command_with_args(handle_ebpf_show_namespace, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "{00000000-0000-0000-0000-000000000000}\n");
+
+    const wchar_t* selected = L"{12345678-9ABC-0000-0000-123456789ABC}";
+    REQUIRE(run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, selected).empty());
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_show_namespace, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "{12345678-9abc-0000-0000-123456789abc}\n");
+
+    for (const auto invalid :
+         {L"",
+          L"null",
+          L"all",
+          L"12345678-9abc-0000-0000-123456789abc",
+          L"{12345678-9abc-0000-0000-123456789abz}",
+          L"{123456789abc-0000-0000-123456789abc}",
+          L"{12345678-9abc-0000-0000-123456789abc}suffix"}) {
+        output = run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, invalid);
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error: invalid namespace GUID; expected {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\n");
+        output = run_netsh_command_with_args(handle_ebpf_show_namespace, &result, 0);
+        REQUIRE(result == NO_ERROR);
+        REQUIRE(output == "{12345678-9abc-0000-0000-123456789abc}\n");
+    }
+    run_netsh_command_with_args(handle_ebpf_show_namespace, &result, 1, L"all");
+    REQUIRE(result == ERROR_INVALID_SYNTAX);
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 0);
+    REQUIRE(result == ERROR_INVALID_SYNTAX);
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 2, selected, selected);
+    REQUIRE(result == ERROR_INVALID_SYNTAX);
+    output = run_netsh_command_with_args(
+        handle_ebpf_set_namespace, &result, 1, L"namespace={00000000-0000-0000-0000-000000000000}");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+    output = run_netsh_command_with_args(handle_ebpf_show_namespace, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "{00000000-0000-0000-0000-000000000000}\n");
+}
+
+TEST_CASE("NU50 netsh shared command and help registrations", "[netsh][namespace]")
+{
+    // The production normal/original/long ABI tables all expand these same command lists.
+#define TEST_COMMAND_ENTRY(token, handler) {CMD_##token, handler, HLP_##token, HLP_##token##_EX}
+    struct command_entry
+    {
+        const wchar_t* name;
+        FN_HANDLE_CMD* handler;
+        uint32_t help;
+        uint32_t help_ex;
+    };
+    const command_entry set[] = {EBPF_SET_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry show[] = {EBPF_SHOW_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry add[] = {EBPF_ADD_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry remove[] = {EBPF_DELETE_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry pin[] = {EBPF_PIN_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry unpin[] = {EBPF_UNPIN_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry lookup[] = {EBPF_LOOKUP_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry update[] = {EBPF_UPDATE_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry getnext[] = {EBPF_GETNEXT_COMMANDS(TEST_COMMAND_ENTRY)};
+    const command_entry dump[] = {EBPF_DUMP_COMMANDS(TEST_COMMAND_ENTRY)};
+#undef TEST_COMMAND_ENTRY
+    auto check = [](const auto& table, const wchar_t* name, FN_HANDLE_CMD* handler) {
+        auto found = std::find_if(
+            std::begin(table), std::end(table), [name](const auto& entry) { return wcscmp(entry.name, name) == 0; });
+        REQUIRE(found != std::end(table));
+        REQUIRE(found->handler == handler);
+        REQUIRE(found->help != 0);
+        REQUIRE(found->help_ex == found->help + 1);
+    };
+    check(set, L"namespace", handle_ebpf_set_namespace);
+    check(show, L"namespace", handle_ebpf_show_namespace);
+    check(add, L"map", handle_ebpf_add_map);
+    check(remove, L"map", handle_ebpf_delete_map);
+    check(remove, L"link", handle_ebpf_delete_link);
+    check(pin, L"link", handle_ebpf_pin_link);
+    check(unpin, L"link", handle_ebpf_unpin_link);
+    check(lookup, L"map", handle_ebpf_lookup_map);
+    check(update, L"map", handle_ebpf_update_map);
+    check(getnext, L"map", handle_ebpf_getnext_map);
+    check(dump, L"map", handle_ebpf_dump_map);
+}
+
+static uint32_t
+create_netsh_test_map(const wchar_t* type, const wchar_t* path, const wchar_t* keysize = L"4")
+{
+    int result;
+    auto output = run_netsh_command_with_args(
+        handle_ebpf_add_map, &result, 6, type, keysize, L"4", L"8", path, L"name=netsh_namespace_map");
+    REQUIRE(result == NO_ERROR);
+    uint32_t id = 0;
+    REQUIRE(sscanf_s(output.c_str(), "Created with ID %u\n", &id) == 1);
+    REQUIRE(id != 0);
+    return id;
+}
+
+TEST_CASE("NU51 netsh map CRUD and dump are scoped to the selected namespace", "[netsh][namespace][maps]")
+{
+    _test_helper_netsh test_helper;
+    test_helper.initialize();
+    netsh_namespace_restore restore;
+    int result;
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{12345678-1234-4234-8234-123456789abc}");
+    REQUIRE(result == NO_ERROR);
+    auto selected_id = create_netsh_test_map(L"hash", L"netsh_namespace_map");
+    auto selected = std::to_wstring(selected_id);
+    auto output =
+        run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, selected.c_str(), L"01000000", L"2a000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{00000000-0000-0000-0000-000000000000}");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_show_maps, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("netsh_namespace_map") == std::string::npos);
+    output = run_netsh_command_with_args(handle_ebpf_show_pins, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("netsh_namespace_map") == std::string::npos);
+    for (auto command :
+         {handle_ebpf_lookup_map, handle_ebpf_delete_map, handle_ebpf_getnext_map, handle_ebpf_dump_map}) {
+        output = run_netsh_command_with_args(command, &result, 1, selected.c_str());
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error 2: could not open map\n");
+    }
+    output =
+        run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, selected.c_str(), L"01000000", L"ff000000");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 2: could not open map\n");
+    auto default_id = create_netsh_test_map(L"hash", L"netsh_namespace_map");
+    auto default_string = std::to_wstring(default_id);
+    REQUIRE(default_id != selected_id);
+    run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, default_string.c_str(), L"01000000", L"ff000000");
+    REQUIRE(result == NO_ERROR);
+
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{12345678-1234-4234-8234-123456789abc}");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_show_pins, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find(std::format("{:7}      Map  BPF:\\netsh_namespace_map\n", selected_id)) != std::string::npos);
+    REQUIRE(output.find(std::format("{:7}      Map  BPF:\\netsh_namespace_map\n", default_id)) == std::string::npos);
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 2, selected.c_str(), L"01000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "value: 2a000000\n");
+    output = run_netsh_command_with_args(handle_ebpf_getnext_map, &result, 1, selected.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "key: 01000000\n");
+    output = run_netsh_command_with_args(handle_ebpf_dump_map, &result, 1, selected.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "key: 01000000\nvalue: 2a000000\n");
+    auto inner_option = L"innerid=" + selected;
+    output = run_netsh_command_with_args(
+        handle_ebpf_add_map, &result, 6, L"array_of_maps", L"4", L"4", L"1", L"netsh_outer", inner_option.c_str());
+    REQUIRE(result == NO_ERROR);
+    uint32_t outer_id;
+    REQUIRE(sscanf_s(output.c_str(), "Created with ID %u\n", &outer_id) == 1);
+    auto outer = std::to_wstring(outer_id);
+    auto id_bytes = [](uint32_t id) {
+        return std::format(L"{:02x}{:02x}{:02x}{:02x}", id & 0xff, (id >> 8) & 0xff, (id >> 16) & 0xff, id >> 24);
+    };
+    auto foreign_value = id_bytes(default_id);
+    output = run_netsh_command_with_args(
+        handle_ebpf_update_map, &result, 3, outer.c_str(), L"00000000", foreign_value.c_str());
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 2: could not open map value object\n");
+    auto own_value = id_bytes(selected_id);
+    output =
+        run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, outer.c_str(), L"00000000", own_value.c_str());
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 2, outer.c_str(), L"00000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(
+        output == std::format(
+                      "value: {:02x}{:02x}{:02x}{:02x}\n",
+                      selected_id & 0xff,
+                      (selected_id >> 8) & 0xff,
+                      (selected_id >> 16) & 0xff,
+                      selected_id >> 24));
+    run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, outer.c_str(), L"netsh_outer");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_getnext_map, &result, 2, selected.c_str(), L"01000000");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 2: could not get next map key\n");
+    output = run_netsh_command_with_args(handle_ebpf_delete_map, &result, 2, selected.c_str(), L"01000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+    output = run_netsh_command_with_args(handle_ebpf_dump_map, &result, 1, selected.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+    output = run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, selected.c_str(), L"netsh_namespace_map");
+    REQUIRE(result == NO_ERROR);
+
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{00000000-0000-0000-0000-000000000000}");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 2, default_string.c_str(), L"01000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "value: ff000000\n");
+    run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, default_string.c_str(), L"netsh_namespace_map");
+    REQUIRE(result == NO_ERROR);
+}
+
+TEST_CASE("netsh map byte and numeric validation", "[netsh][namespace][maps]")
+{
+    _test_helper_netsh test_helper;
+    test_helper.initialize();
+    auto id = std::to_wstring(create_netsh_test_map(L"hash", L"netsh_validation"));
+    int result;
+    for (auto invalid_key : {L"", L"0", L"000000", L"0000000000", L"0000000g", L"0x00000000"}) {
+        auto output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 2, id.c_str(), invalid_key);
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error: key must contain exactly keysize bytes as hexadecimal pairs\n");
+    }
+    for (auto invalid_value : {L"", L"0", L"000000", L"0000000000", L"0000000g"}) {
+        auto output =
+            run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, id.c_str(), L"01000000", invalid_value);
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error: value must contain exactly valuesize bytes as hexadecimal pairs\n");
+    }
+    for (auto invalid_id : {L"-1", L"0", L"4294967296", L"1junk", L" 1"}) {
+        auto output = run_netsh_command_with_args(handle_ebpf_dump_map, &result, 1, invalid_id);
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error: invalid map ID\n");
+    }
+    auto output = run_netsh_command_with_args(
+        handle_ebpf_update_map, &result, 4, id.c_str(), L"01000000", L"01000000", L"flags=invalid");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error: flags must be any, noexist, or exist\n");
+    output = run_netsh_command_with_args(
+        handle_ebpf_update_map, &result, 4, id.c_str(), L"01000000", L"01000000", L"noexist");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(
+        handle_ebpf_update_map, &result, 4, id.c_str(), L"01000000", L"02000000", L"noexist");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 17: could not update map element\n");
+    output =
+        run_netsh_command_with_args(handle_ebpf_update_map, &result, 4, id.c_str(), L"01000000", L"02000000", L"exist");
+    REQUIRE(result == NO_ERROR);
+    run_netsh_command_with_args(handle_ebpf_dump_map, &result, 2, id.c_str(), L"key=01000000");
+    REQUIRE(result == ERROR_INVALID_SYNTAX);
+    output = run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, id.c_str(), L"netsh_validation");
+    REQUIRE(result == NO_ERROR);
+
+    for (auto invalid_size : {L"-1", L"4294967296", L"4garbage"}) {
+        output = run_netsh_command_with_args(
+            handle_ebpf_add_map, &result, 5, L"hash", invalid_size, L"4", L"8", L"netsh_invalid");
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error: invalid map dimensions or inner map ID\n");
+    }
+    output =
+        run_netsh_command_with_args(handle_ebpf_add_map, &result, 5, L"invalid", L"4", L"4", L"8", L"netsh_invalid");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error: invalid map type\n");
+}
+
+TEST_CASE("netsh per-CPU and keyless map values", "[netsh][namespace][maps]")
+{
+    _test_helper_netsh test_helper;
+    test_helper.initialize();
+    int result;
+    auto id = std::to_wstring(create_netsh_test_map(L"percpu_array", L"netsh_percpu"));
+    std::wstring bytes;
+    for (int cpu = 0; cpu < libbpf_num_possible_cpus(); cpu++) {
+        bytes += L"2a00000000000000";
+    }
+    auto output =
+        run_netsh_command_with_args(handle_ebpf_update_map, &result, 3, id.c_str(), L"00000000", bytes.c_str());
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 2, id.c_str(), L"00000000");
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "value: " + down_cast_from_wstring(bytes) + "\n");
+    run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, id.c_str(), L"netsh_percpu");
+    REQUIRE(result == NO_ERROR);
+
+    id = std::to_wstring(create_netsh_test_map(L"queue", L"netsh_queue", L"0"));
+    output = run_netsh_command_with_args(handle_ebpf_update_map, &result, 2, id.c_str(), L"value=2a000000");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 1, id.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output == "value: 2a000000\n");
+    output = run_netsh_command_with_args(handle_ebpf_dump_map, &result, 1, id.c_str());
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error: this map does not support nondestructive key iteration\n");
+    output = run_netsh_command_with_args(handle_ebpf_delete_map, &result, 1, id.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+    output = run_netsh_command_with_args(handle_ebpf_lookup_map, &result, 1, id.c_str());
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 2: could not look up map element\n");
+    run_netsh_command_with_args(handle_ebpf_unpin_map, &result, 2, id.c_str(), L"netsh_queue");
+    REQUIRE(result == NO_ERROR);
 }
 
 std::string
@@ -1157,6 +1471,7 @@ TEST_CASE("show processes", "[netsh][processes]")
         // There are no real eBPF handles used in this test so the result should be empty.
         REQUIRE(
             output == "\n"
+                      "Host-wide process handle diagnostics (not namespace-scoped)\n"
                       "  PID  Name\n"
                       "=====  ==============\n");
         REQUIRE(result == NO_ERROR);
@@ -1270,6 +1585,92 @@ _test_pin_unpin_map(ebpf_execution_type_t execution_type)
 }
 
 DECLARE_ALL_TEST_CASES("pin/unpin map", "[netsh][pin]", _test_pin_unpin_map);
+
+static void
+_test_namespace_program_management(ebpf_execution_type_t execution_type)
+{
+    _test_helper_netsh test_helper;
+    test_helper.initialize();
+    netsh_namespace_restore restore;
+    auto parameters = _get_netsh_tail_call_parameters(execution_type);
+    int result;
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{12345678-1234-4234-8234-123456789abc}");
+    REQUIRE(result == NO_ERROR);
+    auto output =
+        run_netsh_command_with_args(handle_ebpf_add_program, &result, 2, parameters.file_name, L"pinned=none");
+    REQUIRE(result == NO_ERROR);
+    uint32_t program_id;
+    REQUIRE(sscanf_s(output.c_str(), "Loaded with ID %u\n", &program_id) == 1);
+    auto program = std::to_wstring(program_id);
+    run_netsh_command_with_args(handle_ebpf_pin_program, &result, 2, program.c_str(), L"netsh_namespace_program");
+    REQUIRE(result == NO_ERROR);
+    uint32_t link_id;
+    REQUIRE(bpf_link_get_next_id(0, &link_id) == 0);
+    auto link = std::to_wstring(link_id);
+    run_netsh_command_with_args(handle_ebpf_pin_link, &result, 2, link.c_str(), L"netsh_namespace_link");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_show_links, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("sample_ext") != std::string::npos);
+    output = run_netsh_command_with_args(handle_ebpf_show_pins, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("netsh_namespace_link") != std::string::npos);
+    REQUIRE(output.find("netsh_namespace_program") != std::string::npos);
+    REQUIRE(output.find(std::format("{:7}     Link  BPF:\\netsh_namespace_link\n", link_id)) != std::string::npos);
+
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{00000000-0000-0000-0000-000000000000}");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_show_programs, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("sample_ext") == std::string::npos);
+    output = run_netsh_command_with_args(handle_ebpf_show_links, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("sample_ext") == std::string::npos);
+    output = run_netsh_command_with_args(handle_ebpf_show_pins, &result, 0);
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.find("netsh_namespace_") == std::string::npos);
+    for (auto command : {handle_ebpf_pin_link, handle_ebpf_unpin_link}) {
+        output = run_netsh_command_with_args(command, &result, 2, link.c_str(), L"netsh_namespace_link");
+        REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+        REQUIRE(output == "error 2: could not open link\n");
+    }
+    output = run_netsh_command_with_args(handle_ebpf_delete_link, &result, 1, link.c_str());
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 2: could not open link\n");
+    output = run_netsh_command_with_args(handle_ebpf_delete_program, &result, 1, program.c_str());
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "Program not found\n");
+    REQUIRE(_ebpf_netsh_objects.size() == 1);
+    output = run_netsh_command_with_args(
+        handle_ebpf_set_program, &result, 2, program.c_str(), L"pinpath=netsh_namespace_program_foreign");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "Program not found.\n");
+
+    run_netsh_command_with_args(handle_ebpf_set_namespace, &result, 1, L"{12345678-1234-4234-8234-123456789abc}");
+    REQUIRE(result == NO_ERROR);
+    output = run_netsh_command_with_args(handle_ebpf_unpin_link, &result, 2, link.c_str(), L"netsh_namespace_program");
+    REQUIRE(result == ERROR_SUPPRESS_OUTPUT);
+    REQUIRE(output == "error 22: could not manage link\n");
+    output = run_netsh_command_with_args(handle_ebpf_delete_link, &result, 1, link.c_str());
+    REQUIRE(result == NO_ERROR);
+    REQUIRE(output.empty());
+    run_netsh_command_with_args(handle_ebpf_unpin_link, &result, 2, link.c_str(), L"netsh_namespace_link");
+    REQUIRE(result == NO_ERROR);
+    run_netsh_command_with_args(handle_ebpf_set_program, &result, 2, program.c_str(), L"sample_ext");
+    REQUIRE(result == ERROR_OKAY);
+    run_netsh_command_with_args(handle_ebpf_set_program, &result, 2, program.c_str(), L"");
+    REQUIRE(result == ERROR_OKAY);
+    run_netsh_command_with_args(handle_ebpf_unpin_program, &result, 2, program.c_str(), L"netsh_namespace_program");
+    REQUIRE(result == NO_ERROR);
+    run_netsh_command_with_args(handle_ebpf_delete_program, &result, 1, program.c_str());
+    REQUIRE(result == NO_ERROR);
+    verify_no_programs_exist();
+}
+
+DECLARE_JIT_TEST_CASES(
+    "NU51 namespace program and link management",
+    "[netsh][namespace][programs][links]",
+    _test_namespace_program_management);
 
 // Test cases for show hash functionality.
 TEST_CASE("show hash nosuchfile.o", "[netsh][hash]")

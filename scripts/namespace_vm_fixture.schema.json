@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Approved dedicated GUID namespace VM fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["approvedDedicatedVM", "powershellPath", "dll", "driver"],
+  "properties": {
+    "approvedDedicatedVM": { "const": true },
+    "powershellPath": { "type": "string", "minLength": 1 },
+    "dll": { "$ref": "#/$defs/namespacedArtifact" },
+    "driver": { "$ref": "#/$defs/namespacedArtifact" },
+    "nativeProgram": { "$ref": "#/$defs/artifact" },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ebpfService", "unrelatedLocalService"],
+      "properties": {
+        "ebpfService": { "const": "ebpfsvc" },
+        "unrelatedLocalService": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "version"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "version": { "type": "string" }
+      }
+    },
+    "namespacedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "version", "namespaceSupport"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "version": { "type": "string", "minLength": 1 },
+        "namespaceSupport": { "type": "boolean" }
+      }
+    }
+  }
+}

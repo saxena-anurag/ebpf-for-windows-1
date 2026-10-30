@@ -10,8 +10,26 @@
 #include <windows.h>
 #include <ws2def.h>
 #include <ws2ipdef.h>
+#include <cerrno>
 #include <codecvt>
 #include <iphlpapi.h>
+#include <limits>
+
+bool
+parse_uint32(_In_z_ const wchar_t* text, _Out_ uint32_t& value)
+{
+    if (*text < L'0' || *text > L'9') {
+        return false;
+    }
+    wchar_t* end = nullptr;
+    errno = 0;
+    auto number = wcstoull(text, &end, 0);
+    if (errno == ERANGE || *end != L'\0' || number > (std::numeric_limits<uint32_t>::max)()) {
+        return false;
+    }
+    value = static_cast<uint32_t>(number);
+    return true;
+}
 
 std::string
 down_cast_from_wstring(const std::wstring& wide_string)

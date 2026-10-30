@@ -60,12 +60,14 @@ extern "C"
      * @brief Load programs, create maps and resolve map and helper addresses for
      *  already loaded native module.
      *
+     * @param[in] namespace_id Namespace captured for the object-creation request.
      * @param[in] module_id Identifier of the native eBPF module to load programs
      *  and maps from.
      * @param[in] count_of_map_handles Count of maps in the native module.
      * @param[out] map_handles Array of handles of the maps created.
      * @param[in] count_of_program_handles Count of programs in the native module.
      * @param[out] program_handles Array of handles for the programs created.
+     * @param[out] map_pin_ownership Optional byte per map indicating no pin, newly created pin, or reused pin.
      *
      * @retval EBPF_SUCCESS The operation was successful.
      * @retval EBPF_NO_MEMORY Unable to allocate resources for this
@@ -76,11 +78,13 @@ extern "C"
      */
     _Must_inspect_result_ ebpf_result_t
     ebpf_native_load_programs(
+        _In_ const GUID* namespace_id,
         _In_ const GUID* module_id,
         size_t count_of_map_handles,
         _Out_writes_opt_(count_of_map_handles) ebpf_handle_t* map_handles,
         size_t count_of_program_handles,
-        _Out_writes_(count_of_program_handles) ebpf_handle_t* program_handles);
+        _Out_writes_(count_of_program_handles) ebpf_handle_t* program_handles,
+        _Out_writes_opt_(count_of_map_handles) uint8_t* map_pin_ownership);
 
     /**
      * @brief Get count of programs in the native module.

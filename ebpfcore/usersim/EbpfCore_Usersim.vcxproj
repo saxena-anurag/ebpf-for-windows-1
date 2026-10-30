@@ -206,7 +206,13 @@
       <FileDigestAlgorithm>SHA256</FileDigestAlgorithm>
     </DriverSign>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="access_check.cpp" />
     <ClCompile Include="..\ebpf_drv.c">
       <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">USERSIM_DLLMAIN;%(PreprocessorDefinitions);BINARY_COMPATIBLE=0;NT;UNICODE;_UNICODE;NDIS630;POOL_NX_OPTIN_AUTO</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)'=='FuzzerDebug'">USERSIM_DLLMAIN;%(PreprocessorDefinitions);BINARY_COMPATIBLE=0;NT;UNICODE;_UNICODE;NDIS630;POOL_NX_OPTIN_AUTO</PreprocessorDefinitions>

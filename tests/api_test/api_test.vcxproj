@@ -150,7 +150,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="api_test.cpp" />
+    <ClCompile Include="namespace_tooling_tests.cpp" />
+    <ClCompile Include="namespace_vm_fixture_tests.cpp" />
     <ClCompile Include="api_test_jit.cpp" />
+    <ClCompile Include="namespace_tests.cpp" />
+    <ClCompile Include="namespace_dll_lifetime_tests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\ebpfapi\ebpfapi.vcxproj">
@@ -174,6 +178,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="api_test_jit.h" />
+    <ClInclude Include="namespace_tests.h" />
     <ClInclude Include="header.h" />
     <ClInclude Include="rpc_client.h" />
   </ItemGroup>

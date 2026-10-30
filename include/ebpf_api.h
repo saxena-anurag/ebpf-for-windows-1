@@ -39,6 +39,28 @@ extern "C"
     struct bpf_link;
 
     /**
+     * @brief Select the calling process's namespace for subsequent discovery and creation.
+     *
+     * GUID_NULL resets selection to the default namespace. Existing object handles
+     * remain valid. Namespaces are logical partitions, not an authorization boundary.
+     * This management operation requires the existing eBPF management privileges.
+     * Supported library load/pin sequences serialize against SET; raw IOCTL callers
+     * are responsible for their own synchronization.
+     * @retval EBPF_INVALID_ARGUMENT namespace_guid is NULL or SET reenters a guarded library operation.
+     * @retval EBPF_OPERATION_NOT_SUPPORTED The installed driver does not support namespaces.
+     */
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_set_namespace(_In_ const GUID* namespace_guid) EBPF_NO_EXCEPT;
+
+    /**
+     * @brief Query the calling process's current namespace (initially GUID_NULL).
+     * @retval EBPF_INVALID_ARGUMENT namespace_guid is NULL.
+     * @retval EBPF_OPERATION_NOT_SUPPORTED The installed driver does not support namespaces.
+     */
+    _Must_inspect_result_ ebpf_result_t
+    ebpf_get_namespace(_Out_ GUID* namespace_guid) EBPF_NO_EXCEPT;
+
+    /**
      * @brief Query info about an eBPF program.
      * @param[in] fd File descriptor of an eBPF program.
      * @param[out] execution_type On success, contains the execution type.

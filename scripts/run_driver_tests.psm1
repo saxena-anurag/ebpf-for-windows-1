@@ -360,6 +360,14 @@ function Invoke-CICDTests
     if (-not $ProofOfVerification) {
         $ExcludeProofOfVerification = "~[proof_of_verification]"
     }
+    # Explicit isolated-VM opt-in; ordinary CI and regression images are unchanged.
+    $NamespaceIdentityManifest = $env:EBPF_NAMESPACE_VM_IDENTITY_MANIFEST
+    if ($NamespaceIdentityManifest) {
+        if (-not $ExecuteSystemTests) {
+            throw "Namespace identity fixtures require the existing SYSTEM lane (-ExecuteSystemTests)."
+        }
+        $NamespaceIdentityManifest = (Resolve-Path -LiteralPath $NamespaceIdentityManifest).Path
+    }
 
     $TestList = @(
         (New-TestTuple -Test "api_test.exe" -Arguments "~`"load_native_program_invalid4`" ~pinned_map_enum $ExcludeProofOfVerification" -Timeout 600),
@@ -367,6 +375,9 @@ function Invoke-CICDTests
         (New-TestTuple -Test "sample_ext_app.exe"),
         (New-TestTuple -Test "socket_tests.exe" -Timeout 1800)
     )
+    if ($NamespaceIdentityManifest) {
+        $TestList += New-TestTuple -Test "api_test.exe" -Arguments '"ND12 actual Administrator namespace fixture"' -Timeout 360
+    }
 
     foreach ($Test in $TestList) {
         Invoke-Test -TestName $($Test.Test) -TestArgs $($Test.Arguments) -VerboseLogs $VerboseLogs -TestHangTimeout $($Test.Timeout) -TraceFileName $($Test.Test)
@@ -380,6 +391,20 @@ function Invoke-CICDTests
             $TestCommand = "PsExec64.exe"
             $TestArguments = "-accepteula -nobanner -s -w `"$pwd`" `"$pwd\$($Test.Test)`" $($Test.Arguments) `"-d yes`""
             Invoke-Test -TestName $TestCommand -TestArgs $TestArguments -InnerTestName $($Test.Test)  -VerboseLogs $VerboseLogs -TestHangTimeout $($Test.Timeout) -TraceFileName "$($Test.Test)_System"
+        }
+        if ($NamespaceIdentityManifest) {
+            # Pass the manifest explicitly: SYSTEM's environment need not inherit
+            # the invoking user's variables. Reuse the existing PsExec lane only.
+            $scriptPath = (Join-Path $pwd 'execute_namespace_vm_tests.ps1').Replace("'", "''")
+            $manifestPath = $NamespaceIdentityManifest.Replace("'", "''")
+            $systemPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            foreach ($lane in @('ND12System', 'ND12Service', 'ND12LocalService')) {
+                $command = "try { & '$scriptPath' -Scenario $lane -Manifest '$manifestPath'; exit 0 } catch { Write-Error `$_; exit 1 }"
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+                $arguments = "-accepteula -nobanner -s -w `"$pwd`" `"$systemPowerShell`" -NoProfile -NonInteractive -EncodedCommand $encoded"
+                Invoke-Test -TestName 'PsExec64.exe' -TestArgs $arguments -VerboseLogs $VerboseLogs `
+                    -TestHangTimeout 360 -TraceFileName "namespace_$lane"
+            }
         }
     }
 
