@@ -40,8 +40,8 @@
 #define HEADER_SIZE         8
 #define HEADER_PAD_SIZE     2
 
-// Maximum valid operation ID (EBPF_OPERATION_LINK_SET_LEGACY_MODE = 45)
-#define MAX_OPERATION_ID    45
+// Maximum valid operation ID (EBPF_OPERATION_LOAD_NATIVE_PROGRAMS_EX = 49)
+#define MAX_OPERATION_ID    49
 
 // Operation IDs that need specific validation
 #define OP_CREATE_PROGRAM                    2
@@ -63,6 +63,10 @@
 #define OP_MAP_DELETE_ELEMENT_BATCH           35
 #define OP_MAP_GET_NEXT_KEY_VALUE_BATCH       36
 #define OP_GET_NEXT_PINNED_OBJECT_PATH       38
+#define OP_SET_NAMESPACE                    46
+#define OP_GET_NAMESPACE                    47
+#define OP_DELETE_PINNING_IF_MATCHES         48
+#define OP_LOAD_NATIVE_PROGRAMS_EX           49
 
 // Enum maximums
 #define EBPF_CODE_TYPE_MAX      3     // EBPF_CODE_NATIVE
@@ -438,6 +442,18 @@ where (MessageLength >= HEADER_SIZE)
     UINT8 Rest[:byte-size (UINT32)(MessageLength - HEADER_SIZE)];
 } GENERIC_BODY;
 
+typedef struct _GUID_BODY (UINT16 MessageLength)
+where (MessageLength == HEADER_SIZE + 16)
+{
+    UINT8 Guid[16];
+} GUID_BODY;
+
+typedef struct _GET_NAMESPACE_BODY (UINT16 MessageLength)
+where (MessageLength == HEADER_SIZE)
+{
+    UINT8 Rest[:byte-size (UINT32)(MessageLength - HEADER_SIZE)];
+} GET_NAMESPACE_BODY;
+
 
 // ============================================================================
 // Operation body dispatcher
@@ -484,6 +500,14 @@ casetype _OPERATION_BODY (UINT32 Id, UINT16 MessageLength)
             MAP_GET_NEXT_KEY_VALUE_BATCH_BODY(MessageLength)    MapGetNextKeyValueBatch;
         case OP_GET_NEXT_PINNED_OBJECT_PATH:
             PINNED_OBJECT_PATH_BODY(MessageLength)              PinnedObjectPath;
+        case OP_SET_NAMESPACE:
+            GUID_BODY(MessageLength)                            SetNamespace;
+        case OP_GET_NAMESPACE:
+            GET_NAMESPACE_BODY(MessageLength)                   GetNamespace;
+        case OP_DELETE_PINNING_IF_MATCHES:
+            UPDATE_PINNING_BODY(MessageLength)                  DeletePinningIfMatches;
+        case OP_LOAD_NATIVE_PROGRAMS_EX:
+            GUID_BODY(MessageLength)                            LoadNativeProgramsEx;
         default:
             GENERIC_BODY(MessageLength)                         Generic;
     }

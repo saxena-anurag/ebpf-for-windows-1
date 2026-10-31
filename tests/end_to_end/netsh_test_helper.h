@@ -8,6 +8,7 @@
 #include "elf.h"
 #include "links.h"
 #include "maps.h"
+#include "namespaces.h"
 #include "netsh_hash.h"
 #include "pins.h"
 #include "processes.h"

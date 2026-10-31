@@ -11,6 +11,9 @@ extern "C"
 #endif
 
     FN_HANDLE_CMD handle_ebpf_show_links;
+    FN_HANDLE_CMD handle_ebpf_delete_link;
+    FN_HANDLE_CMD handle_ebpf_pin_link;
+    FN_HANDLE_CMD handle_ebpf_unpin_link;
 
 #ifdef __cplusplus
 }

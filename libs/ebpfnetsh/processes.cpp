@@ -232,7 +232,7 @@ handle_ebpf_show_processes(
         process_count = bytes_used / sizeof(DWORD);
     } while (process_count == max_processes);
 
-    std::cout << std::endl;
+    std::cout << "\nHost-wide process handle diagnostics (not namespace-scoped)\n";
     std::cout << "  PID  Name" << std::endl;
     std::cout << "=====  ==============" << std::endl;
 

@@ -41,26 +41,59 @@ handle_ebpf_show_pins(
     // Read all pin paths.  Currently we get them in a non-deterministic
     // order, so we use a std::set to sort them in code point order.
     char pinpath[EBPF_MAX_PIN_PATH_LENGTH] = "";
-    ebpf_object_type_t object_type = EBPF_OBJECT_PROGRAM;
     std::set<std::string> paths;
-    while (ebpf_get_next_pinned_object_path(pinpath, pinpath, sizeof(pinpath), &object_type) == EBPF_SUCCESS) {
+    for (;;) {
+        ebpf_object_type_t object_type = EBPF_OBJECT_UNKNOWN;
+        auto result = ebpf_get_next_pinned_object_path(pinpath, pinpath, sizeof(pinpath), &object_type);
+        if (result == EBPF_NO_MORE_KEYS) {
+            break;
+        }
+        if (result != EBPF_SUCCESS) {
+            std::cerr << "error " << result << ": could not enumerate pins\n";
+            return ERROR_SUPPRESS_OUTPUT;
+        }
         paths.insert(pinpath);
     }
 
     // Now walk through all paths in code point order.
     for (auto path : paths) {
-        int program_fd = bpf_obj_get(path.c_str());
-        if (program_fd < 0) {
-            continue;
+        int fd = bpf_obj_get(path.c_str());
+        if (fd < 0) {
+            if (errno == ENOENT) {
+                continue;
+            }
+            std::cerr << "error " << errno << ": could not open pinned object\n";
+            return ERROR_SUPPRESS_OUTPUT;
         }
 
-        struct bpf_prog_info info = {};
+        union
+        {
+            bpf_prog_info program;
+            bpf_map_info map;
+            bpf_link_info link;
+        } info{};
         uint32_t info_size = (uint32_t)sizeof(info);
-        if (bpf_obj_get_info_by_fd(program_fd, &info, &info_size) == 0) {
-            printf("%7u  Program  %s\n", info.id, path.c_str());
+        ebpf_object_type_t type = EBPF_OBJECT_UNKNOWN;
+        auto result = ebpf_object_get_info_by_fd(fd, &info, &info_size, &type);
+        Platform::_close(fd);
+        if (result != EBPF_SUCCESS) {
+            std::cerr << "error " << result << ": could not get pinned object information\n";
+            return ERROR_SUPPRESS_OUTPUT;
         }
-
-        Platform::_close(program_fd);
+        switch (type) {
+        case EBPF_OBJECT_PROGRAM:
+            printf("%7u  Program  %s\n", info.program.id, path.c_str());
+            break;
+        case EBPF_OBJECT_MAP:
+            printf("%7u      Map  %s\n", info.map.id, path.c_str());
+            break;
+        case EBPF_OBJECT_LINK:
+            printf("%7u     Link  %s\n", info.link.id, path.c_str());
+            break;
+        default:
+            std::cerr << "error: unsupported pinned object type\n";
+            return ERROR_SUPPRESS_OUTPUT;
+        }
     }
     return NO_ERROR;
 }

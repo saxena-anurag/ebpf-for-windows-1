@@ -1,0 +1,25 @@
+{
+  "approvedDedicatedVM": false,
+  "powershellPath": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  "dll": {
+    "path": "D:\\approved-artifacts\\current\\ebpfapi.dll",
+    "sha256": "REPLACE_WITH_APPROVED_DLL_SHA256",
+    "version": "REPLACE_WITH_EXACT_DLL_FILE_VERSION",
+    "namespaceSupport": true
+  },
+  "driver": {
+    "path": "C:\\Program Files\\ebpf-for-windows\\ebpfcore.sys",
+    "sha256": "REPLACE_WITH_APPROVED_INSTALLED_DRIVER_SHA256",
+    "version": "REPLACE_WITH_EXACT_DRIVER_FILE_VERSION",
+    "namespaceSupport": true
+  },
+  "nativeProgram": {
+    "path": "D:\\approved-artifacts\\current\\test_sample_ebpf.sys",
+    "sha256": "REPLACE_WITH_APPROVED_NATIVE_SAMPLE_SHA256",
+    "version": ""
+  },
+  "services": {
+    "ebpfService": "ebpfsvc",
+    "unrelatedLocalService": "NamespaceTestLocalService"
+  }
+}

@@ -1343,9 +1343,16 @@ _IRQL_requires_max_(PASSIVE_LEVEL) static void _ebpf_program_free(_In_opt_ _Post
 }
 
 _Must_inspect_result_ ebpf_result_t
-ebpf_program_create(_In_ const ebpf_program_parameters_t* program_parameters, _Outptr_ ebpf_program_t** program)
+ebpf_program_create(
+    _In_ const GUID* namespace_id,
+    _In_ const ebpf_program_parameters_t* program_parameters,
+    _Outptr_ ebpf_program_t** program)
 {
     EBPF_LOG_ENTRY();
+    *program = NULL;
+    if (namespace_id == NULL) {
+        EBPF_RETURN_RESULT(EBPF_INVALID_ARGUMENT);
+    }
     ebpf_result_t retval;
     ebpf_program_t* local_program = NULL;
     cxplat_utf8_string_t local_program_name = {NULL, 0};
@@ -1508,6 +1515,7 @@ ebpf_program_create(_In_ const ebpf_program_parameters_t* program_parameters, _O
     // Note: This is performed after initializing the program as it inserts the program into the global list.
     // From this point on, the program can be found by other threads.
     retval = EBPF_OBJECT_INITIALIZE(
+        namespace_id,
         &local_program->object,
         EBPF_OBJECT_PROGRAM,
         _ebpf_program_free,
@@ -1617,6 +1625,14 @@ ebpf_program_associate_maps(ebpf_program_t* program, ebpf_map_t** maps, uint32_t
     ebpf_result_t result = EBPF_SUCCESS;
     ebpf_map_t** program_maps = NULL;
     EBPF_LOG_ENTRY();
+
+    for (uint32_t map_index = 0; map_index < maps_count; map_index++) {
+        if (memcmp(
+                &program->object.namespace_id, &((ebpf_core_object_t*)maps[map_index])->namespace_id, sizeof(GUID)) !=
+            0) {
+            EBPF_RETURN_RESULT(EBPF_INVALID_ARGUMENT);
+        }
+    }
 
     size_t index;
     size_t program_maps_length = 0;
@@ -3096,13 +3112,15 @@ Done:
 
 _Must_inspect_result_ ebpf_result_t
 ebpf_program_create_and_initialize(
-    _In_ const ebpf_program_parameters_t* parameters, _Out_ ebpf_handle_t* program_handle)
+    _In_ const GUID* namespace_id,
+    _In_ const ebpf_program_parameters_t* parameters,
+    _Out_ ebpf_handle_t* program_handle)
 {
     EBPF_LOG_ENTRY();
     ebpf_result_t retval;
     ebpf_program_t* program = NULL;
 
-    retval = ebpf_program_create(parameters, &program);
+    retval = ebpf_program_create(namespace_id, parameters, &program);
     if (retval != EBPF_SUCCESS) {
         goto Done;
     }

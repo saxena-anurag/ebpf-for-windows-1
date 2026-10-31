@@ -489,6 +489,7 @@ jobs:
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: execution_context_fuzzer
+      pre_test: .\generate_namespace_fuzz_corpus.ps1 -OutputDirectory execution_context_fuzzer_corpus
       test_command: .\execution_context_fuzzer.exe execution_context_fuzzer_corpus -use_value_profile=1 -runs=1000 -artifact_prefix=Artifacts\
       build_artifact: Build-x64
       environment: '["windows-2025"]'
@@ -502,6 +503,7 @@ jobs:
     uses: ./.github/workflows/reusable-test.yml
     with:
       name: execution_context_fuzzer
+      pre_test: .\generate_namespace_fuzz_corpus.ps1 -OutputDirectory execution_context_fuzzer_corpus
       test_command: .\execution_context_fuzzer.exe execution_context_fuzzer_corpus -use_value_profile=1 -runs=3000 -artifact_prefix=Artifacts\
       build_artifact: Build-x64
       environment: '["windows-2025"]'

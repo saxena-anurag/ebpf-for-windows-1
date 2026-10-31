@@ -16,6 +16,10 @@
 
 # Generated files
 tools/netsh/resource.h
+^libs/(ioctl_spec|elf_spec)/generated/
+
+# Strict JSON namespace fixtures cannot contain license-header comments.
+^scripts/namespace_vm_fixture\.(example|schema)\.json$
 
 # Other Files
 LICENSE.txt

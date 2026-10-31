@@ -52,6 +52,96 @@ END
 
 STRINGTABLE
 BEGIN
+    HLP_GROUP_LOOKUP "Looks up an eBPF map element.\n"
+    HLP_GROUP_UPDATE "Updates an eBPF map element.\n"
+    HLP_GROUP_GETNEXT "Gets the next key of an eBPF map.\n"
+    HLP_GROUP_DUMP "Dumps an eBPF map.\n"
+    HLP_EBPF_SET_NAMESPACE "Selects the namespace for this netsh process.\n"
+    HLP_EBPF_SET_NAMESPACE_EX "\
+\nUsage: %1!s! [namespace=]{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\
+\n\
+\nRemarks: Selects the process-wide namespace for subsequent eBPF commands.\
+\n         Use {00000000-0000-0000-0000-000000000000} to reset to default.\
+\n         Run selection and management in one interactive or netsh -f invocation.\
+\n         Selection is not persisted or inherited by another process.\
+\n"
+    HLP_EBPF_SHOW_NAMESPACE "Shows this netsh process's selected namespace.\n"
+    HLP_EBPF_SHOW_NAMESPACE_EX "\
+\nUsage: %1!s!\
+\n\
+\nRemarks: Shows only the current process's namespace, not other namespaces.\
+\n"
+    HLP_EBPF_ADD_MAP "Creates and pins an eBPF map in the selected namespace.\n"
+    HLP_EBPF_ADD_MAP_EX "\
+\nUsage: %1!s! [type=]<string> [keysize=]<integer> [valuesize=]<integer>\
+\n                   [maxentries=]<integer> [pinpath=]<string>\
+\n                   [[name=]<string>] [[innerid=]<integer>]\
+\n\
+\nRemarks: Uses the map type names shown by ""show maps"".\
+\n         The pin path keeps the new map alive after the command returns.\
+\n         innerid is required only for array_of_maps and hash_of_maps.\
+\n         Dimensions and operations must be supported by the map type.\
+\n"
+    HLP_EBPF_LOOKUP_MAP "Looks up an eBPF map element.\n"
+    HLP_EBPF_LOOKUP_MAP_EX "\
+\nUsage: %1!s! [id=]<integer> [[key=]<hex-bytes>]\
+\n\
+\nRemarks: Hex bytes are contiguous pairs in memory byte order, for example 01000000.\
+\n         The key must contain exactly keysize bytes; omit it for keyless maps.\
+\n         Values are printed as hex bytes; object-valued maps return object IDs.\
+\n         Per-CPU values include each CPU's value rounded up to eight bytes.\
+\n"
+    HLP_EBPF_UPDATE_MAP "Creates or updates an eBPF map element.\n"
+    HLP_EBPF_UPDATE_MAP_EX "\
+\nUsage: %1!s! [id=]<integer> [[key=]<hex-bytes>] [value=]<hex-bytes>\
+\n                   [[flags=]any|noexist|exist]\
+\n\
+\nRemarks: Keys and values are contiguous hexadecimal byte pairs, with exact sizes.\
+\n         Use value= explicitly when omitting a key for a keyless map.\
+\n         Flags default to any. Per-CPU values require eight-byte padding for each CPU.\
+\n         For prog_array and map-in-map, value is a four-byte little-endian object ID\
+\n         resolved in the selected namespace, not a process-local fd.\
+\n"
+    HLP_EBPF_DELETE_MAP "Deletes an element from an eBPF map.\n"
+    HLP_EBPF_DELETE_MAP_EX "\
+\nUsage: %1!s! [id=]<integer> [[key=]<hex-bytes>]\
+\n\
+\nRemarks: Deletes a map element, not the map itself. Keys are exactly keysize bytes\
+\n         as contiguous hex pairs. To release a map, remove its pins and references.\
+\n         Omit key for a queue or stack to remove its next value without displaying it.\
+\n"
+    HLP_EBPF_GETNEXT_MAP "Gets the next key of an eBPF map.\n"
+    HLP_EBPF_GETNEXT_MAP_EX "\
+\nUsage: %1!s! [id=]<integer> [[key=]<hex-bytes>]\
+\n\
+\nRemarks: Omit key to get the first key. A supplied key must have exactly keysize\
+\n         bytes as contiguous hex pairs. End of iteration is reported as an error.\
+\n"
+    HLP_EBPF_DUMP_MAP "Dumps the keys and values of an eBPF map.\n"
+    HLP_EBPF_DUMP_MAP_EX "\
+\nUsage: %1!s! [id=]<integer>\
+\n\
+\nRemarks: Dumps hexadecimal keys and values using checked nondestructive iteration.\
+\n         An empty map succeeds. Maps without key iteration are not supported.\
+\n         Concurrent changes can produce a partial dump and an explicit failure;\
+\n         this is not an atomic snapshot. Per-CPU values include eight-byte padding.\
+\n"
+    HLP_EBPF_DELETE_LINK "Detaches an eBPF link in the selected namespace.\n"
+    HLP_EBPF_DELETE_LINK_EX "\
+\nUsage: %1!s! [id=]<integer>\
+\n\
+\nRemarks: Detaches the link. Pins and other open references are not removed.\
+\n"
+    HLP_EBPF_PIN_LINK "Pins an eBPF link in the selected namespace.\n"
+    HLP_EBPF_PIN_LINK_EX "\
+\nUsage: %1!s! [id=]<integer> [pinpath=]<string>\
+\n"
+    HLP_EBPF_UNPIN_LINK "Unpins an eBPF link in the selected namespace.\n"
+    HLP_EBPF_UNPIN_LINK_EX "\
+\nUsage: %1!s! [id=]<integer> [pinpath=]<string>\
+\n\
+\nRemarks: The path must refer to the specified link.\
+\n"
     HLP_EBPF_ADD_PROGRAM    "Loads an eBPF program.\n"
     HLP_EBPF_ADD_PROGRAM_EX "\
 \nUsage: %1!s! [filename=]<string>\
@@ -239,28 +329,29 @@ BEGIN
     HLP_EBPF_SHOW_MAPS_EX "\
 \nUsage: %1!s!\
 \n\
-\nRemarks: Shows all loaded maps.\
+\nRemarks: Shows loaded maps in the selected namespace.\
 \n"
 
     HLP_EBPF_SHOW_LINKS  "Shows eBPF links.\n"
     HLP_EBPF_SHOW_LINKS_EX "\
 \nUsage: %1!s!\
 \n\
-\nRemarks: Shows all loaded links.\
+\nRemarks: Shows loaded links in the selected namespace.\
 \n"
 
-    HLP_EBPF_SHOW_PINS  "Shows paths used by pinned programs.\n"
+    HLP_EBPF_SHOW_PINS  "Shows paths used by pinned maps, programs, and links.\n"
     HLP_EBPF_SHOW_PINS_EX "\
 \nUsage: %1!s!\
 \n\
-\nRemarks: Shows pinned program paths.\
+\nRemarks: Shows pinned object paths in the selected namespace.\
 \n"
 
-    HLP_EBPF_SHOW_PROCESSES  "Shows processes using eBPF.\n"
+    HLP_EBPF_SHOW_PROCESSES  "Shows host-wide process handle diagnostics for eBPF.\n"
     HLP_EBPF_SHOW_PROCESSES_EX "\
 \nUsage: %1!s!\
 \n\
-\nRemarks: Shows processes using eBPF.\
+\nRemarks: Host-wide OS handle diagnostics, not namespace-scoped object discovery.\
+\n         Namespace selection does not filter this command.\
 \n"
 
     HLP_EBPF_SHOW_HASH  "Shows hash embedded in PE file.\n"

@@ -114,6 +114,7 @@ bpf_map__pin(struct bpf_map* map, const char* path)
 int
 bpf_object__pin_maps(struct bpf_object* obj, const char* path)
 {
+    ebpf_api_namespace_guard namespace_guard;
     struct bpf_map* map;
     int err;
 
@@ -152,7 +153,8 @@ bpf_object__pin_maps(struct bpf_object* obj, const char* path)
 
 err_unpin_maps:
     while ((map = bpf_object__prev_map(obj, map)) != NULL) {
-        bpf_map__unpin(map, NULL);
+        ebpf_object_unpin_if_matches_cleanup(map->map_fd, map->pin_path);
+        map->pinned = false;
     }
     return libbpf_err(err);
 }
@@ -160,6 +162,7 @@ err_unpin_maps:
 int
 bpf_object__unpin_maps(struct bpf_object* obj, const char* path)
 {
+    ebpf_api_namespace_guard namespace_guard;
     struct bpf_map* map;
     int err;
 
@@ -228,7 +231,10 @@ bpf_map__max_entries(const struct bpf_map* map)
 bool
 bpf_map__is_pinned(const struct bpf_map* map)
 {
-    return map->pinned;
+    ebpf_api_namespace_guard namespace_guard;
+    GUID namespace_id;
+    return map->pinned && ebpf_get_namespace_for_pin(&namespace_id) == EBPF_SUCCESS &&
+           IsEqualGUID(map->pinned_namespace, namespace_id);
 }
 
 int

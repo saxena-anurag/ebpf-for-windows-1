@@ -51,3 +51,26 @@ If new IOCTLs are added, regenerate the corpus as follows:
 3) Run the unit tests.
 4) Replace the files under tests\libfuzzer\execution_context\corpus with the
 generated files.
+
+## Namespace-aware execution-context seeds
+
+The execution-context harness also accepts an `NS` prefix (bytes `4e 53`),
+followed by a one-byte namespace selector: zero for default, one for A, or two
+for B. The remaining bytes use the existing two-byte reply length and IOCTL
+message format. These cases create independent A/B maps pinned at the same
+path before dispatch, so lookup, enumeration and unpin mutations exercise actual
+namespace boundaries. Every input resets selection before constructing its
+fixtures, making a minimized input independent of prior fuzz inputs.
+
+Generate the additional deterministic seeds in a FuzzerDebug output directory:
+
+```powershell
+.\generate_namespace_fuzz_corpus.ps1 -OutputDirectory execution_context_fuzzer_corpus
+.\execution_context_fuzzer.exe execution_context_fuzzer_corpus -runs=1000
+```
+
+The script is copied from `scripts\generate_namespace_fuzz_corpus.ps1` by the
+build and runs before both execution-context CI fuzz jobs. It adds seeds without
+removing the existing corpus. The harness fails explicitly if a rejected request
+changes the selected namespace; this assertion does not use its legacy
+non-failing `REQUIRE` macro.

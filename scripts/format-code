@@ -273,6 +273,11 @@ get_file_list
 
 for file in "${file_list[@]}"
 do
+    # EverParse outputs must match regeneration, not clang-format.
+    case "$(realpath "$file")" in
+        */libs/ioctl_spec/generated/*|*/libs/elf_spec/generated/*) continue ;;
+    esac
+
     ((filecount+=1))
     cf="${cfargs} $file"
 

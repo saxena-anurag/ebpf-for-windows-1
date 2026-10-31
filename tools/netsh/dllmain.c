@@ -1,10 +1,12 @@
 // Copyright (c) eBPF for Windows contributors
 // SPDX-License-Identifier: MIT
 
+#include "commands.h"
 #include "ebpf_api.h"
 #include "elf.h"
 #include "links.h"
 #include "maps.h"
+#include "namespaces.h"
 #include "netsh_hash.h"
 #include "pins.h"
 #include "processes.h"
@@ -40,53 +42,26 @@ DllMain(HMODULE moduleHandle, unsigned long reasonForCall, void* reserved)
 #define CMD_GROUP_SET L"set"
 #define CMD_GROUP_SHOW L"show"
 #define CMD_GROUP_UNPIN L"unpin"
-
-// Nouns.
-#define CMD_EBPF_SHOW_DISASSEMBLY L"disassembly"
-#define CMD_EBPF_SHOW_HASH L"hash"
-#define CMD_EBPF_SHOW_LINKS L"links"
-#define CMD_EBPF_SHOW_MAPS L"maps"
-#define CMD_EBPF_SHOW_PINS L"pins"
-#define CMD_EBPF_SHOW_PROCESSES L"processes"
-
-#define CMD_EBPF_ADD_PROGRAM L"program"
-#define CMD_EBPF_DELETE_PROGRAM L"program"
-#define CMD_EBPF_SET_PROGRAM L"program"
-#define CMD_EBPF_SHOW_PROGRAMS L"programs"
-
-#define CMD_EBPF_SHOW_SECTIONS L"sections"
-#define CMD_EBPF_SHOW_VERIFICATION L"verification"
-
-#define CMD_EBPF_PIN_MAP L"map"
-#define CMD_EBPF_PIN_PROGRAM L"program"
-#define CMD_EBPF_UNPIN_MAP L"map"
-#define CMD_EBPF_UNPIN_PROGRAM L"program"
+#define CMD_GROUP_LOOKUP L"lookup"
+#define CMD_GROUP_UPDATE L"update"
+#define CMD_GROUP_GETNEXT L"getnext"
+#define CMD_GROUP_DUMP L"dump"
 
 // Define this to work around a recent regression introduced in Windows
 // until it is fixed.
 #define WINDOWS_NETSH_BUG_WORKAROUND 1
 
 #ifndef WINDOWS_NETSH_BUG_WORKAROUND
-CMD_ENTRY g_EbpfAddCommandTable[] = {
-    CREATE_CMD_ENTRY(EBPF_ADD_PROGRAM, handle_ebpf_add_program),
-};
-CMD_ENTRY g_EbpfDeleteCommandTable[] = {
-    CREATE_CMD_ENTRY(EBPF_DELETE_PROGRAM, handle_ebpf_delete_program),
-};
-CMD_ENTRY g_EbpfSetCommandTable[] = {
-    CREATE_CMD_ENTRY(EBPF_SET_PROGRAM, handle_ebpf_set_program),
-};
-CMD_ENTRY g_EbpfShowCommandTable[] = {
-    CREATE_CMD_ENTRY(EBPF_SHOW_DISASSEMBLY, handle_ebpf_show_disassembly),
-    CREATE_CMD_ENTRY(EBPF_SHOW_HASH, handle_ebpf_show_hash),
-    CREATE_CMD_ENTRY(EBPF_SHOW_LINKS, handle_ebpf_show_links),
-    CREATE_CMD_ENTRY(EBPF_SHOW_MAPS, handle_ebpf_show_maps),
-    CREATE_CMD_ENTRY(EBPF_SHOW_PINS, handle_ebpf_show_pins),
-    CREATE_CMD_ENTRY(EBPF_SHOW_PROCESSES, handle_ebpf_show_processes),
-    CREATE_CMD_ENTRY(EBPF_SHOW_PROGRAMS, handle_ebpf_show_programs),
-    CREATE_CMD_ENTRY(EBPF_SHOW_SECTIONS, handle_ebpf_show_sections),
-    CREATE_CMD_ENTRY(EBPF_SHOW_VERIFICATION, handle_ebpf_show_verification),
-};
+CMD_ENTRY g_EbpfAddCommandTable[] = {EBPF_ADD_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfDeleteCommandTable[] = {EBPF_DELETE_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfSetCommandTable[] = {EBPF_SET_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfShowCommandTable[] = {EBPF_SHOW_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfPinCommandTable[] = {EBPF_PIN_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfUnpinCommandTable[] = {EBPF_UNPIN_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfLookupCommandTable[] = {EBPF_LOOKUP_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfUpdateCommandTable[] = {EBPF_UPDATE_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfGetnextCommandTable[] = {EBPF_GETNEXT_COMMANDS(CREATE_CMD_ENTRY)};
+CMD_ENTRY g_EbpfDumpCommandTable[] = {EBPF_DUMP_COMMANDS(CREATE_CMD_ENTRY)};
 #else
 typedef struct _CMD_ENTRY_ORIGINAL
 {
@@ -113,64 +88,29 @@ typedef struct _CMD_ENTRY_LONG
 } CMD_ENTRY_LONG, *PCMD_ENTRY_LONG;
 #define CREATE_CMD_ENTRY_LONG(t, f) {CMD_##t, f, HLP_##t, HLP_##t##_EX, CMD_FLAG_PRIVATE, NULL, NULL}
 
-CMD_ENTRY_ORIGINAL g_EbpfAddCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_ADD_PROGRAM, handle_ebpf_add_program),
-};
-CMD_ENTRY_LONG g_EbpfAddCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_ADD_PROGRAM, handle_ebpf_add_program),
-};
-CMD_ENTRY_ORIGINAL g_EbpfDeleteCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_DELETE_PROGRAM, handle_ebpf_delete_program),
-};
-CMD_ENTRY_LONG g_EbpfDeleteCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_DELETE_PROGRAM, handle_ebpf_delete_program),
-};
-CMD_ENTRY_ORIGINAL g_EbpfSetCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SET_PROGRAM, handle_ebpf_set_program),
-};
-CMD_ENTRY_LONG g_EbpfSetCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_SET_PROGRAM, handle_ebpf_set_program),
-};
-CMD_ENTRY_ORIGINAL g_EbpfShowCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_DISASSEMBLY, handle_ebpf_show_disassembly),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_HASH, handle_ebpf_show_hash),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_LINKS, handle_ebpf_show_links),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_MAPS, handle_ebpf_show_maps),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_PINS, handle_ebpf_show_pins),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_PROCESSES, handle_ebpf_show_processes),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_PROGRAMS, handle_ebpf_show_programs),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_SECTIONS, handle_ebpf_show_sections),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_SHOW_VERIFICATION, handle_ebpf_show_verification),
-};
-CMD_ENTRY_LONG g_EbpfShowCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_DISASSEMBLY, handle_ebpf_show_disassembly),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_HASH, handle_ebpf_show_hash),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_LINKS, handle_ebpf_show_links),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_MAPS, handle_ebpf_show_maps),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_PINS, handle_ebpf_show_pins),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_PROCESSES, handle_ebpf_show_processes),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_PROGRAMS, handle_ebpf_show_programs),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_SECTIONS, handle_ebpf_show_sections),
-    CREATE_CMD_ENTRY_LONG(EBPF_SHOW_VERIFICATION, handle_ebpf_show_verification),
-};
+CMD_ENTRY_ORIGINAL g_EbpfAddCommandTableOriginal[] = {EBPF_ADD_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfAddCommandTableLong[] = {EBPF_ADD_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfDeleteCommandTableOriginal[] = {EBPF_DELETE_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfDeleteCommandTableLong[] = {EBPF_DELETE_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfSetCommandTableOriginal[] = {EBPF_SET_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfSetCommandTableLong[] = {EBPF_SET_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfShowCommandTableOriginal[] = {EBPF_SHOW_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfShowCommandTableLong[] = {EBPF_SHOW_COMMANDS(CREATE_CMD_ENTRY_LONG)};
 
-CMD_ENTRY_ORIGINAL g_EbpfPinCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_PIN_MAP, handle_ebpf_pin_map),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_PIN_PROGRAM, handle_ebpf_pin_program),
-};
-CMD_ENTRY_LONG g_EbpfPinCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_PIN_MAP, handle_ebpf_pin_map),
-    CREATE_CMD_ENTRY_LONG(EBPF_PIN_PROGRAM, handle_ebpf_pin_program),
-};
+CMD_ENTRY_ORIGINAL g_EbpfPinCommandTableOriginal[] = {EBPF_PIN_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfPinCommandTableLong[] = {EBPF_PIN_COMMANDS(CREATE_CMD_ENTRY_LONG)};
 
-CMD_ENTRY_ORIGINAL g_EbpfUnpinCommandTableOriginal[] = {
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_UNPIN_MAP, handle_ebpf_unpin_map),
-    CREATE_CMD_ENTRY_ORIGINAL(EBPF_UNPIN_PROGRAM, handle_ebpf_unpin_program),
-};
-CMD_ENTRY_LONG g_EbpfUnpinCommandTableLong[] = {
-    CREATE_CMD_ENTRY_LONG(EBPF_UNPIN_MAP, handle_ebpf_unpin_map),
-    CREATE_CMD_ENTRY_LONG(EBPF_UNPIN_PROGRAM, handle_ebpf_unpin_program),
-};
+CMD_ENTRY_ORIGINAL g_EbpfUnpinCommandTableOriginal[] = {EBPF_UNPIN_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfUnpinCommandTableLong[] = {EBPF_UNPIN_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+
+CMD_ENTRY_ORIGINAL g_EbpfLookupCommandTableOriginal[] = {EBPF_LOOKUP_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfLookupCommandTableLong[] = {EBPF_LOOKUP_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfUpdateCommandTableOriginal[] = {EBPF_UPDATE_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfUpdateCommandTableLong[] = {EBPF_UPDATE_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfGetnextCommandTableOriginal[] = {EBPF_GETNEXT_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfGetnextCommandTableLong[] = {EBPF_GETNEXT_COMMANDS(CREATE_CMD_ENTRY_LONG)};
+CMD_ENTRY_ORIGINAL g_EbpfDumpCommandTableOriginal[] = {EBPF_DUMP_COMMANDS(CREATE_CMD_ENTRY_ORIGINAL)};
+CMD_ENTRY_LONG g_EbpfDumpCommandTableLong[] = {EBPF_DUMP_COMMANDS(CREATE_CMD_ENTRY_LONG)};
 
 #endif // WINDOWS_NETSH_BUG_WORKAROUND
 
@@ -195,6 +135,10 @@ static CMD_GROUP_ENTRY g_EbpfGroupCommands[] = {
     CREATE_CMD_GROUP_ENTRY(GROUP_SET, g_EbpfSetCommandTable),
     CREATE_CMD_GROUP_ENTRY(GROUP_SHOW, g_EbpfShowCommandTable),
     CREATE_CMD_GROUP_ENTRY(GROUP_UNPIN, g_EbpfUnpinCommandTable),
+    CREATE_CMD_GROUP_ENTRY(GROUP_LOOKUP, g_EbpfLookupCommandTable),
+    CREATE_CMD_GROUP_ENTRY(GROUP_UPDATE, g_EbpfUpdateCommandTable),
+    CREATE_CMD_GROUP_ENTRY(GROUP_GETNEXT, g_EbpfGetnextCommandTable),
+    CREATE_CMD_GROUP_ENTRY(GROUP_DUMP, g_EbpfDumpCommandTable),
 };
 #else
 #define CREATE_CMD_GROUP_ENTRY_ORIGINAL(t, s) \
@@ -207,6 +151,10 @@ static CMD_GROUP_ENTRY g_EbpfGroupCommandsOriginal[] = {
     CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_SET, g_EbpfSetCommandTableOriginal),
     CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_SHOW, g_EbpfShowCommandTableOriginal),
     CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_UNPIN, g_EbpfUnpinCommandTableOriginal),
+    CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_LOOKUP, g_EbpfLookupCommandTableOriginal),
+    CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_UPDATE, g_EbpfUpdateCommandTableOriginal),
+    CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_GETNEXT, g_EbpfGetnextCommandTableOriginal),
+    CREATE_CMD_GROUP_ENTRY_ORIGINAL(GROUP_DUMP, g_EbpfDumpCommandTableOriginal),
 };
 static CMD_GROUP_ENTRY g_EbpfGroupCommandsLong[] = {
     CREATE_CMD_GROUP_ENTRY_LONG(GROUP_ADD, g_EbpfAddCommandTableLong),
@@ -215,6 +163,10 @@ static CMD_GROUP_ENTRY g_EbpfGroupCommandsLong[] = {
     CREATE_CMD_GROUP_ENTRY_LONG(GROUP_SET, g_EbpfSetCommandTableLong),
     CREATE_CMD_GROUP_ENTRY_LONG(GROUP_SHOW, g_EbpfShowCommandTableLong),
     CREATE_CMD_GROUP_ENTRY_LONG(GROUP_UNPIN, g_EbpfUnpinCommandTableLong),
+    CREATE_CMD_GROUP_ENTRY_LONG(GROUP_LOOKUP, g_EbpfLookupCommandTableLong),
+    CREATE_CMD_GROUP_ENTRY_LONG(GROUP_UPDATE, g_EbpfUpdateCommandTableLong),
+    CREATE_CMD_GROUP_ENTRY_LONG(GROUP_GETNEXT, g_EbpfGetnextCommandTableLong),
+    CREATE_CMD_GROUP_ENTRY_LONG(GROUP_DUMP, g_EbpfDumpCommandTableLong),
 };
 #endif // WINDOWS_NETSH_BUG_WORKAROUND
 
