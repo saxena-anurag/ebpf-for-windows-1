@@ -19,7 +19,9 @@
 #include "user\ebpf_native_test.h"
 #endif
 
+#ifndef _KERNEL_MODE
 #include <intrin.h>
+#endif
 
 #define EBPF_MAX_PIN_PATH_LENGTH 256
 #define EBPF_SHA256_HASH_LENGTH 32

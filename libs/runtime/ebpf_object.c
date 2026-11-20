@@ -13,7 +13,9 @@
 #include "ebpf_object_test.h"
 #endif
 
+#ifndef _KERNEL_MODE
 #include <intrin.h>
+#endif
 
 #if defined(EBPF_RUNTIME_TEST_INSTRUMENTATION)
 static ebpf_object_test_callback_t _ebpf_object_test_callback;
