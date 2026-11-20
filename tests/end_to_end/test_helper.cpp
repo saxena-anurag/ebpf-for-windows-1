@@ -283,9 +283,6 @@ GlueCloseHandle(HANDLE object_handle)
         std::scoped_lock lock(_control_files_mutex);
         auto it = _control_files.find(object_handle);
         if (it != _control_files.end()) {
-            if (it->second.use_count() == 1) {
-                ebpf_namespace_state_close(&it->second->state);
-            }
             _control_files.erase(it);
             return TRUE;
         }
@@ -588,9 +585,8 @@ GlueDeviceIoControl(
     local_input_buffer = (*sharedBuffer).data();
     local_output_buffer = (minimum_reply_size > 0) ? (*sharedBuffer).data() : nullptr;
 
-    result = ebpf_namespace_state_capture(&file->state, &context);
-    if (result != EBPF_SUCCESS) {
-        goto Fail;
+    if (!async) {
+        ebpf_namespace_state_capture(&file->state, &context);
     }
     result = ebpf_core_invoke_protocol_handler(
         &context,

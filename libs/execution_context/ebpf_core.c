@@ -3165,7 +3165,8 @@ _ebpf_core_protocol_set_namespace(
     if (context->namespace_target == NULL) {
         return EBPF_INVALID_STATE;
     }
-    return ebpf_namespace_state_set(context->namespace_target, &request->namespace_id);
+    ebpf_namespace_state_set(context->namespace_target, &request->namespace_id);
+    return EBPF_SUCCESS;
 }
 
 static ebpf_result_t

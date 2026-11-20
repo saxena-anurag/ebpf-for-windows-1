@@ -501,13 +501,9 @@ fuzz_ioctl(std::vector<uint8_t>& random_buffer)
         ebpf_namespace_state_t* state;
         ~file_state_cleanup() { ebpf_namespace_state_destroy(state); }
     } cleanup{&file_state};
-    if (ebpf_namespace_state_set(&file_state, selected_namespace) != EBPF_SUCCESS) {
-        throw std::runtime_error("namespace selection failed");
-    }
+    ebpf_namespace_state_set(&file_state, selected_namespace);
     ebpf_request_context_t context = {};
-    if (ebpf_namespace_state_capture(&file_state, &context) != EBPF_SUCCESS) {
-        throw std::runtime_error("namespace capture failed");
-    }
+    ebpf_namespace_state_capture(&file_state, &context);
     bool async = false;
     bool privileged = false;
     std::vector<uint8_t> request;
@@ -595,9 +591,7 @@ fuzz_ioctl(std::vector<uint8_t>& random_buffer)
         async ? &fuzz_async_completion : nullptr);
 
     ebpf_request_context_t after = {};
-    if (ebpf_namespace_state_capture(&file_state, &after) != EBPF_SUCCESS) {
-        std::abort();
-    }
+    ebpf_namespace_state_capture(&file_state, &after);
     const GUID* expected_namespace = &context.namespace_id;
     if (operation_id == EBPF_OPERATION_SET_NAMESPACE && result == EBPF_SUCCESS) {
         expected_namespace =

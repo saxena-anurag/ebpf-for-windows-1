@@ -19,6 +19,8 @@
 #include "namespaces.h"
 #include "platform.h"
 #include "test_helper.hpp"
+#else
+#include "native_helper.hpp"
 #endif
 
 #include <array>
@@ -109,13 +111,8 @@ struct thread_transport_cleanup
 using namespace_object = std::unique_ptr<bpf_object, decltype(&bpf_object__close)>;
 
 namespace_object
-load_native_object()
+load_native_object(_In_z_ const char* file)
 {
-#if defined(EBPF_NAMESPACE_UNIT_TEST)
-    const char* file = "test_sample_ebpf_um.dll";
-#else
-    const char* file = "test_sample_ebpf.sys";
-#endif
     namespace_object object(bpf_object__open(file), bpf_object__close);
     REQUIRE(object != nullptr);
     REQUIRE(bpf_object__load(object.get()) == 0);
@@ -369,7 +366,13 @@ TEST_CASE("thread namespace wrapper pin status is selection neutral", "[namespac
 {
     namespace_fixture fixture;
     REQUIRE(ebpf_set_thread_namespace(&namespace_a) == EBPF_SUCCESS);
-    auto object = load_native_object();
+#if defined(EBPF_NAMESPACE_UNIT_TEST)
+    auto object = load_native_object("test_sample_ebpf_um.dll");
+#else
+    native_module_helper_t native_helper;
+    native_helper.initialize("test_sample_ebpf", EBPF_EXECUTION_NATIVE);
+    auto object = load_native_object(native_helper.get_file_name().c_str());
+#endif
     bpf_map* map = bpf_object__next_map(object.get(), nullptr);
     REQUIRE(map != nullptr);
     REQUIRE_FALSE(bpf_map__is_pinned(map));
@@ -478,7 +481,13 @@ TEST_CASE(
 {
     namespace_fixture fixture;
     REQUIRE(ebpf_set_thread_namespace(&namespace_a) == EBPF_SUCCESS);
-    auto object = load_native_object();
+#if defined(EBPF_NAMESPACE_UNIT_TEST)
+    auto object = load_native_object("test_sample_ebpf_um.dll");
+#else
+    native_module_helper_t native_helper;
+    native_helper.initialize("test_sample_ebpf", EBPF_EXECUTION_NATIVE);
+    auto object = load_native_object(native_helper.get_file_name().c_str());
+#endif
     bpf_program* program = bpf_object__next_program(object.get(), nullptr);
     REQUIRE(program != nullptr);
     REQUIRE(ebpf_set_thread_namespace(&namespace_b) == EBPF_SUCCESS);
@@ -558,7 +567,7 @@ TEST_CASE(
 {
     namespace_fixture fixture;
     REQUIRE(ebpf_set_thread_namespace(&namespace_a) == EBPF_SUCCESS);
-    auto object = load_native_object();
+    auto object = load_native_object("test_sample_ebpf_um.dll");
     bpf_map* map = bpf_object__next_map(object.get(), nullptr);
     REQUIRE(map != nullptr);
     REQUIRE(bpf_map__pin(map, pin_path) == 0);
@@ -760,7 +769,7 @@ TEST_CASE(
     REQUIRE(ebpf_object_unpin(reused_path.c_str()) == EBPF_SUCCESS);
 }
 
-TEST_CASE("thread namespace file state snapshots closing and overflow", "[namespace][thread_namespace]")
+TEST_CASE("thread namespace file state snapshots selection", "[namespace][thread_namespace]")
 {
     ebpf_namespace_state_t state;
     ebpf_namespace_state_initialize(&state);
@@ -770,18 +779,44 @@ TEST_CASE("thread namespace file state snapshots closing and overflow", "[namesp
         ~cleanup() { ebpf_namespace_state_destroy(state); }
     } destroy{&state};
     ebpf_request_context_t captured{};
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_a) == EBPF_SUCCESS);
-    REQUIRE(ebpf_namespace_state_capture(&state, &captured) == EBPF_SUCCESS);
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_b) == EBPF_SUCCESS);
-    REQUIRE(captured.namespace_id == namespace_a);
-    state.generation = UINT64_MAX;
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_b) == EBPF_SUCCESS);
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_a) == EBPF_ARITHMETIC_OVERFLOW);
-    REQUIRE(state.namespace_id == namespace_b);
-    ebpf_namespace_state_close(&state);
-    REQUIRE(ebpf_namespace_state_capture(&state, &captured) == EBPF_INVALID_STATE);
-    REQUIRE(captured.namespace_id == namespace_a);
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_a) == EBPF_INVALID_STATE);
+    ebpf_namespace_state_capture(&state, &captured);
+    REQUIRE(captured.namespace_id == default_namespace);
+
+    SECTION("later SET and reset do not change captured requests")
+    {
+        ebpf_namespace_state_set(&state, &namespace_a);
+        ebpf_namespace_state_capture(&state, &captured);
+        ebpf_namespace_state_set(&state, &namespace_a);
+        ebpf_namespace_state_set(&state, &namespace_b);
+        ebpf_request_context_t after{};
+        ebpf_namespace_state_capture(&state, &after);
+        REQUIRE(captured.namespace_id == namespace_a);
+        REQUIRE(after.namespace_id == namespace_b);
+        ebpf_namespace_state_set(&state, &default_namespace);
+        ebpf_namespace_state_capture(&state, &after);
+        REQUIRE(after.namespace_id == default_namespace);
+        REQUIRE(captured.namespace_id == namespace_a);
+    }
+
+    SECTION("concurrent SET and capture never observe a partial GUID")
+    {
+        std::barrier start(2);
+        std::thread writer([&]() {
+            start.arrive_and_wait();
+            for (size_t iteration = 0; iteration < 10000; ++iteration) {
+                ebpf_namespace_state_set(&state, &namespace_a);
+                ebpf_namespace_state_set(&state, &default_namespace);
+            }
+        });
+        bool consistent = true;
+        start.arrive_and_wait();
+        for (size_t iteration = 0; iteration < 10000; ++iteration) {
+            ebpf_namespace_state_capture(&state, &captured);
+            consistent &= captured.namespace_id == namespace_a || captured.namespace_id == default_namespace;
+        }
+        writer.join();
+        REQUIRE(consistent);
+    }
 }
 
 TEST_CASE("thread namespace malformed protocol requests preserve file selection", "[namespace][thread_namespace]")
@@ -794,9 +829,9 @@ TEST_CASE("thread namespace malformed protocol requests preserve file selection"
         ebpf_namespace_state_t* state;
         ~state_cleanup() { ebpf_namespace_state_destroy(state); }
     } cleanup{&state};
-    REQUIRE(ebpf_namespace_state_set(&state, &namespace_b) == EBPF_SUCCESS);
+    ebpf_namespace_state_set(&state, &namespace_b);
     ebpf_request_context_t scope{};
-    REQUIRE(ebpf_namespace_state_capture(&state, &scope) == EBPF_SUCCESS);
+    ebpf_namespace_state_capture(&state, &scope);
     ebpf_operation_set_namespace_request_t request{{sizeof(request), EBPF_OPERATION_SET_NAMESPACE}, namespace_a};
     for (uint16_t size = 0; size < sizeof(request); ++size) {
         REQUIRE(
@@ -804,7 +839,7 @@ TEST_CASE("thread namespace malformed protocol requests preserve file selection"
                 &scope, EBPF_OPERATION_SET_NAMESPACE, &request, size, nullptr, 0, nullptr, nullptr) ==
             EBPF_INVALID_ARGUMENT);
         ebpf_request_context_t after{};
-        REQUIRE(ebpf_namespace_state_capture(&state, &after) == EBPF_SUCCESS);
+        ebpf_namespace_state_capture(&state, &after);
         REQUIRE(after.namespace_id == namespace_b);
     }
     scope.namespace_target = nullptr;

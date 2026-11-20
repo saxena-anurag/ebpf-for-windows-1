@@ -64,7 +64,9 @@ DRIVER_INITIALIZE DriverEntry;
 typedef struct _ebpf_file_context
 {
     ebpf_namespace_state_t namespace_state;
+    ebpf_lock_t request_lock;
     ebpf_list_entry_t pending_requests;
+    bool closing;
     bool initialized;
 } ebpf_file_context_t;
 
@@ -877,6 +879,7 @@ _ebpf_driver_file_create(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJECT fil
     UNREFERENCED_PARAMETER(device);
     ebpf_file_context_t* context = _ebpf_driver_get_file_context(file);
     ebpf_namespace_state_initialize(&context->namespace_state);
+    ebpf_lock_create(&context->request_lock);
     ebpf_list_initialize(&context->pending_requests);
     context->initialized = true;
     WdfRequestComplete(request, STATUS_SUCCESS);
@@ -889,10 +892,12 @@ _ebpf_driver_file_cleanup(WDFFILEOBJECT file)
     if (!context->initialized) {
         return;
     }
-    ebpf_namespace_state_close(&context->namespace_state);
+    ebpf_lock_state_t state = ebpf_lock_lock(&context->request_lock);
+    context->closing = true;
+    ebpf_lock_unlock(&context->request_lock, state);
     for (;;) {
         WDFREQUEST pending = NULL;
-        ebpf_lock_state_t state = ebpf_lock_lock(&context->namespace_state.lock);
+        state = ebpf_lock_lock(&context->request_lock);
         for (ebpf_list_entry_t* entry = context->pending_requests.Flink; entry != &context->pending_requests;
              entry = entry->Flink) {
             ebpf_driver_request_context_t* request_context =
@@ -904,7 +909,7 @@ _ebpf_driver_file_cleanup(WDFFILEOBJECT file)
                 break;
             }
         }
-        ebpf_lock_unlock(&context->namespace_state.lock, state);
+        ebpf_lock_unlock(&context->request_lock, state);
         if (pending == NULL) {
             break;
         }
@@ -920,6 +925,7 @@ _ebpf_driver_file_close(WDFFILEOBJECT wdf_file_object)
     ebpf_core_close_context(file_object->FsContext2);
     ebpf_file_context_t* context = _ebpf_driver_get_file_context(wdf_file_object);
     if (context->initialized) {
+        ebpf_lock_destroy(&context->request_lock);
         ebpf_namespace_state_destroy(&context->namespace_state);
         context->initialized = false;
     }
@@ -970,12 +976,12 @@ _ebpf_driver_try_complete(WDFREQUEST request)
     ebpf_lock_unlock(&context->lock, state);
 
     ebpf_file_context_t* file_context = _ebpf_driver_get_file_context(context->file);
-    state = ebpf_lock_lock(&file_context->namespace_state.lock);
+    state = ebpf_lock_lock(&file_context->request_lock);
     if (context->enrolled) {
         ebpf_list_remove_entry(&context->entry);
         context->enrolled = false;
     }
-    ebpf_lock_unlock(&file_context->namespace_state.lock, state);
+    ebpf_lock_unlock(&file_context->request_lock, state);
     WdfRequestCompleteWithInformation(request, ebpf_result_to_ntstatus(context->result), context->completed_length);
     WdfObjectDereference(request);
     WdfObjectDereference(request);
@@ -1082,13 +1088,13 @@ _ebpf_driver_io_device_control(
     // Keep distinct references for the dispatch stack and eventual terminal completion.
     WdfObjectReference(request);
     WdfObjectReference(request);
-    ebpf_lock_state_t state = ebpf_lock_lock(&file_context->namespace_state.lock);
-    bool closing = file_context->namespace_state.closing;
+    ebpf_lock_state_t state = ebpf_lock_lock(&file_context->request_lock);
+    bool closing = file_context->closing;
     if (!closing) {
         ebpf_list_insert_tail(&file_context->pending_requests, &context->entry);
         context->enrolled = true;
     }
-    ebpf_lock_unlock(&file_context->namespace_state.lock, state);
+    ebpf_lock_unlock(&file_context->request_lock, state);
     if (closing) {
         context->starting = false;
         _ebpf_driver_io_device_control_complete(request, 0, EBPF_CANCELED);
@@ -1247,9 +1253,8 @@ _ebpf_driver_dispatch_request(
                     status = STATUS_INVALID_DEVICE_STATE;
                     goto Done;
                 }
-                status = ebpf_result_to_ntstatus(ebpf_namespace_state_capture(&file_context->namespace_state, &scope));
-                if (!NT_SUCCESS(status)) {
-                    goto Done;
+                if (!async) {
+                    ebpf_namespace_state_capture(&file_context->namespace_state, &scope);
                 }
                 if (actual_input_length < minimum_request_size || user_request->length > actual_input_length ||
                     user_request->length < minimum_request_size) {
@@ -1316,7 +1321,6 @@ _ebpf_driver_dispatch_request(
                     ebpf_lock_create(&context->lock);
                     context->initialized = true;
                     context->scope = scope;
-                    context->scope.namespace_target = NULL;
                     context->request = request;
                     context->file = file;
                     context->input = input_buffer;

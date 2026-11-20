@@ -30,7 +30,6 @@ typedef struct _async_ioctl_completion_context
 static thread_local ebpf_handle_t _sync_device_handle = ebpf_handle_invalid;
 static thread_local GUID _thread_namespace{};
 static const GUID _default_namespace{};
-static thread_local uint64_t _thread_namespace_generation;
 static thread_local bool _thread_namespace_valid = true;
 static thread_local bool _sync_device_bound;
 static thread_local size_t _namespace_operation_depth;
@@ -228,10 +227,6 @@ set_thread_namespace(_In_ const GUID* namespace_id) noexcept
     if (_namespace_operation_depth != 0) {
         return EBPF_INVALID_STATE;
     }
-    bool changed = !IsEqualGUID(*namespace_id, _thread_namespace);
-    if (changed && _thread_namespace_generation == UINT64_MAX) {
-        return EBPF_ARITHMETIC_OVERFLOW;
-    }
     ebpf_handle_t handle = get_sync_device_handle();
     if (handle == ebpf_handle_invalid) {
         return win32_error_code_to_ebpf_result(GetLastError());
@@ -242,7 +237,6 @@ set_thread_namespace(_In_ const GUID* namespace_id) noexcept
         return result;
     }
     _thread_namespace = *namespace_id;
-    _thread_namespace_generation += changed ? 1 : 0;
     _thread_namespace_valid = true;
     _sync_device_bound = true;
     return EBPF_SUCCESS;
