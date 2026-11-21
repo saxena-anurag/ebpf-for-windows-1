@@ -8,6 +8,8 @@
  * 2. Opens an IOCTL surface that forwards commands to ebpf_core.
  */
 
+#define EBPF_FILE_ID EBPF_FILE_ID_DRIVER
+
 #include "ebpf_core.h"
 #include "ebpf_error.h"
 #include "ebpf_tracelog.h"
@@ -51,18 +53,19 @@ PSECURITY_DESCRIPTOR ebpf_execution_context_privileged_security_descriptor = NUL
 // Pre-Declarations
 //
 static EVT_WDF_FILE_CLOSE _ebpf_driver_file_close;
+static EVT_WDF_DEVICE_FILE_CREATE _ebpf_driver_file_create;
 static EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL _ebpf_driver_io_device_control;
 static EVT_WDFDEVICE_WDM_IRP_PREPROCESS _ebpf_driver_query_volume_information;
 static EVT_WDF_REQUEST_CANCEL _ebpf_driver_io_device_control_cancel;
 DRIVER_INITIALIZE DriverEntry;
 
-static VOID
-_ebpf_driver_io_device_control(
-    _In_ WDFQUEUE queue,
-    _In_ WDFREQUEST request,
-    size_t output_buffer_length,
-    size_t input_buffer_length,
-    unsigned long io_control_code);
+typedef struct _ebpf_file_context
+{
+    ebpf_namespace_state_t namespace_state;
+    bool initialized;
+} ebpf_file_context_t;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(ebpf_file_context_t, _ebpf_driver_get_file_context)
 
 static _Must_inspect_result_ NTSTATUS
 _ebpf_driver_initialize_local_service_sid(_Out_ PSID sid)
@@ -690,9 +693,11 @@ _ebpf_driver_initialize_device(WDFDRIVER driver_handle, _Out_ WDFDEVICE* device)
         goto Exit;
     }
 
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, ebpf_file_context_t);
     attributes.SynchronizationScope = WdfSynchronizationScopeNone;
-    WDF_FILEOBJECT_CONFIG_INIT(&file_object_config, NULL, _ebpf_driver_file_close, WDF_NO_EVENT_CALLBACK);
+    WDF_FILEOBJECT_CONFIG_INIT(
+        &file_object_config, _ebpf_driver_file_create, _ebpf_driver_file_close, WDF_NO_EVENT_CALLBACK);
+    file_object_config.FileObjectClass = WdfFileObjectWdfCannotUseFsContexts;
     WdfDeviceInitSetFileObjectConfig(device_initialize, &file_object_config, &attributes);
 
     // WDF framework doesn't handle IRP_MJ_QUERY_VOLUME_INFORMATION so register a handler for this IRP.
@@ -813,10 +818,25 @@ Exit:
 }
 
 static void
+_ebpf_driver_file_create(WDFDEVICE device, WDFREQUEST request, WDFFILEOBJECT file)
+{
+    UNREFERENCED_PARAMETER(device);
+    ebpf_file_context_t* context = _ebpf_driver_get_file_context(file);
+    ebpf_namespace_state_initialize(&context->namespace_state);
+    context->initialized = true;
+    WdfRequestComplete(request, STATUS_SUCCESS);
+}
+
+static void
 _ebpf_driver_file_close(WDFFILEOBJECT wdf_file_object)
 {
     FILE_OBJECT* file_object = WdfFileObjectWdmGetFileObject(wdf_file_object);
     ebpf_core_close_context(file_object->FsContext2);
+    ebpf_file_context_t* context = _ebpf_driver_get_file_context(wdf_file_object);
+    if (context->initialized) {
+        ebpf_namespace_state_destroy(&context->namespace_state);
+        context->initialized = false;
+    }
 }
 
 static void
@@ -872,8 +892,9 @@ _ebpf_driver_io_device_control(
     size_t input_buffer_length,
     unsigned long io_control_code)
 {
+    UNREFERENCED_PARAMETER(queue);
     NTSTATUS status = STATUS_SUCCESS;
-    WDFDEVICE device;
+    WDFDEVICE device = WdfIoQueueGetDevice(queue);
     void* input_buffer = NULL;
     void* output_buffer = NULL;
     size_t actual_input_length = 0;
@@ -883,22 +904,19 @@ _ebpf_driver_io_device_control(
     bool async = false;
     bool privileged = false;
     bool wdf_request_ref_acquired = false;
+    void* async_context = NULL;
+    ebpf_request_context_t scope = {0};
+    WDFFILEOBJECT file = NULL;
+#if !defined(USERSIM_DLLMAIN)
+    file = WdfRequestGetFileObject(request);
+#endif
 
-    device = WdfIoQueueGetDevice(queue);
+    UNREFERENCED_PARAMETER(device);
 
     switch (io_control_code) {
     case IOCTL_EBPF_CTL_METHOD_BUFFERED:
-        // Verify that length of the input buffer supplied to the request object
-        // is not zero
         if (input_buffer_length != 0) {
-            // Retrieve the input buffer associated with the request object
-            status = WdfRequestRetrieveInputBuffer(
-                request,             // Request object
-                input_buffer_length, // Length of input buffer
-                &input_buffer,       // Pointer to buffer
-                &actual_input_length // Length of buffer
-            );
-
+            status = WdfRequestRetrieveInputBuffer(request, input_buffer_length, &input_buffer, &actual_input_length);
             if (!NT_SUCCESS(status)) {
                 EBPF_LOG_NTSTATUS_API_FAILURE(EBPF_TRACELOG_KEYWORD_ERROR, WdfRequestRetrieveInputBuffer, status);
                 goto Done;
@@ -914,7 +932,6 @@ _ebpf_driver_io_device_control(
             if (input_buffer != NULL) {
                 size_t minimum_request_size = 0;
                 size_t minimum_reply_size = 0;
-                void* async_context = NULL;
 
                 user_request = input_buffer;
                 if (actual_input_length < sizeof(struct _ebpf_operation_header)) {
@@ -939,9 +956,21 @@ _ebpf_driver_io_device_control(
                     goto Done;
                 }
 
+                if (file != NULL) {
+                    ebpf_file_context_t* file_context = _ebpf_driver_get_file_context(file);
+                    if (file_context->initialized && WdfFileObjectWdmGetFileObject(file)->FsContext2 == NULL) {
+                        ebpf_namespace_state_capture(&file_context->namespace_state, &scope);
+                    }
+                }
+
+                if (actual_input_length < minimum_request_size || user_request->length > actual_input_length ||
+                    user_request->length < minimum_request_size) {
+                    status = STATUS_INVALID_PARAMETER;
+                    goto Done;
+                }
+
                 // Be aware: Input and output buffer point to the same memory.
                 if (minimum_reply_size > 0) {
-                    // Retrieve output buffer associated with the request object
                     status = WdfRequestRetrieveOutputBuffer(
                         request, output_buffer_length, &output_buffer, &actual_output_length);
                     if (!NT_SUCCESS(status)) {
@@ -994,6 +1023,7 @@ _ebpf_driver_io_device_control(
                 }
 
                 status = ebpf_result_to_ntstatus(ebpf_core_invoke_protocol_handler(
+                    &scope,
                     user_request->id,
                     user_request,
                     (uint16_t)actual_input_length,
